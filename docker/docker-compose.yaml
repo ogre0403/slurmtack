@@ -1,0 +1,18 @@
+services:
+  slurmtack:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    network_mode: host
+    env_file: .env
+    volumes:
+      - slurmtack-data:/data
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    network_mode: host
+    restart: unless-stopped
+
+volumes:
+  slurmtack-data:

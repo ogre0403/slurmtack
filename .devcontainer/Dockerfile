@@ -16,7 +16,7 @@ RUN go install github.com/ramya-rao-a/go-outline@v0.0.0-20210608161538-9736a4bde
     go install golang.org/x/tools/gopls@v0.15.3
 
 
-RUN apk add --no-cache make libc6-compat
+RUN apk add --no-cache make libc6-compat gcc musl-dev
 
 RUN apk add --no-cache zsh-vcs tmux less && \
     sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.2.1/zsh-in-docker.sh)" -- \
