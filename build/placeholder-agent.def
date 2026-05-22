@@ -1,0 +1,12 @@
+Bootstrap: library
+From: alpine:3.19
+
+%files
+  build/output/placeholder-agent /usr/local/bin/placeholder-agent
+
+%runscript
+  exec /usr/local/bin/placeholder-agent
+
+%labels
+  Author slurmtack
+  Description GPU switch placeholder agent

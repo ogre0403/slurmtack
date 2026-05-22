@@ -22,10 +22,20 @@ func WithTimeout(d time.Duration) Option {
 	return func(rc *RestClient) { rc.httpClient.Timeout = d }
 }
 
+func WithAMQPURL(url string) Option {
+	return func(rc *RestClient) { rc.amqpURL = url }
+}
+
+func WithPlaceholderSIFPath(path string) Option {
+	return func(rc *RestClient) { rc.placeholderSIFPath = path }
+}
+
 type RestClient struct {
-	baseURL    string
-	jwtToken   string
-	httpClient *http.Client
+	baseURL             string
+	jwtToken            string
+	httpClient          *http.Client
+	amqpURL             string
+	placeholderSIFPath  string
 }
 
 func NewRestClient(baseURL, jwtToken string, opts ...Option) *RestClient {
@@ -43,6 +53,16 @@ func NewRestClient(baseURL, jwtToken string, opts ...Option) *RestClient {
 }
 
 func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJobRequest) (*PlaceholderJobResult, error) {
+	envVars := []string{
+		"PATH=/usr/bin:/bin",
+		fmt.Sprintf("EXECUTION_ID=%s", req.ExecutionID),
+		fmt.Sprintf("AMQP_URL=%s", c.amqpURL),
+		fmt.Sprintf("SLURM_API_URL=%s", c.baseURL),
+		fmt.Sprintf("SLURM_JWT_TOKEN=%s", c.jwtToken),
+	}
+
+	script := fmt.Sprintf("#!/bin/bash\nsingularity run %s", c.placeholderSIFPath)
+
 	body := map[string]any{
 		"job": map[string]any{
 			"name":                      fmt.Sprintf("gpu-switch-%s", req.ExecutionID),
@@ -52,8 +72,8 @@ func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJo
 			"constraint":                req.Constraint,
 			"partition":                 req.Partition,
 			"current_working_directory": "/tmp",
-			"environment":              []string{"PATH=/usr/bin:/bin"},
-			"script":                   "#!/bin/bash\n# placeholder managed by slurmtack",
+			"environment":              envVars,
+			"script":                   script,
 		},
 	}
 

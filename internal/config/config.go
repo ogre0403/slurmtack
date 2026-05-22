@@ -17,9 +17,10 @@ type Config struct {
 	OSProjectName string
 	OSUsername    string
 	OSPassword    string
-	AMQPURL          string
-	SSHPollInterval  time.Duration
-	SSHPollTimeout   time.Duration
+	AMQPURL             string
+	SSHPollInterval     time.Duration
+	SSHPollTimeout      time.Duration
+	PlaceholderSIFPath  string
 }
 
 func Load() (*Config, error) {
@@ -33,7 +34,8 @@ func Load() (*Config, error) {
 		OSProjectName: os.Getenv("OS_PROJECT_NAME"),
 		OSUsername:    os.Getenv("OS_USERNAME"),
 		OSPassword:    os.Getenv("OS_PASSWORD"),
-		AMQPURL:       os.Getenv("AMQP_URL"),
+		AMQPURL:            os.Getenv("AMQP_URL"),
+		PlaceholderSIFPath: os.Getenv("PLACEHOLDER_SIF_PATH"),
 	}
 
 	cfg.SSHPollInterval = parseDuration(os.Getenv("SSH_POLL_INTERVAL"), 10*time.Second)
