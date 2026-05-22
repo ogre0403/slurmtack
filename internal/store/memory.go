@@ -55,6 +55,19 @@ func (m *MemoryStore) ListExecutions(_ context.Context, nodeName string) ([]*dom
 	return result, nil
 }
 
+func (m *MemoryStore) ListActiveExecutions(_ context.Context) ([]*domain.Execution, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []*domain.Execution
+	for _, exec := range m.executions {
+		if exec.OverallStatus == domain.OverallStatusActive {
+			cp := *exec
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
+}
+
 func (m *MemoryStore) AdvanceState(_ context.Context, executionID string, expectedVersion int64, newState domain.SwitchState) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

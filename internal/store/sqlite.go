@@ -102,6 +102,30 @@ func (s *SQLiteStore) ListExecutions(_ context.Context, nodeName string) ([]*dom
 	return result, rows.Err()
 }
 
+func (s *SQLiteStore) ListActiveExecutions(_ context.Context) ([]*domain.Execution, error) {
+	rows, err := s.db.Query(`SELECT
+		id, node_name, direction, requested_by, requested_at,
+		current_state, desired_owner, previous_owner, state_version,
+		overall_status, lock_acquired_at, lock_released_at,
+		final_error_code, final_error_summary, log_root,
+		placeholder_job_id, requested_slurm_constraint, allocation_event_at
+	FROM executions WHERE overall_status = ?`, string(domain.OverallStatusActive))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*domain.Execution
+	for rows.Next() {
+		exec, err := scanExecutionRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, exec)
+	}
+	return result, rows.Err()
+}
+
 func (s *SQLiteStore) UpdateExecution(_ context.Context, exec *domain.Execution) error {
 	res, err := s.db.Exec(`UPDATE executions SET
 		node_name = ?, direction = ?, requested_by = ?, requested_at = ?,

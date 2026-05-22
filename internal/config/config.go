@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 type Config struct {
@@ -16,7 +17,9 @@ type Config struct {
 	OSProjectName string
 	OSUsername    string
 	OSPassword    string
-	AMQPURL       string
+	AMQPURL          string
+	SSHPollInterval  time.Duration
+	SSHPollTimeout   time.Duration
 }
 
 func Load() (*Config, error) {
@@ -33,6 +36,9 @@ func Load() (*Config, error) {
 		AMQPURL:       os.Getenv("AMQP_URL"),
 	}
 
+	cfg.SSHPollInterval = parseDuration(os.Getenv("SSH_POLL_INTERVAL"), 10*time.Second)
+	cfg.SSHPollTimeout = parseDuration(os.Getenv("SSH_POLL_TIMEOUT"), 10*time.Minute)
+
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -45,6 +51,17 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func parseDuration(s string, defaultVal time.Duration) time.Duration {
+	if s == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return defaultVal
+	}
+	return d
 }
 
 func (c *Config) validate() error {

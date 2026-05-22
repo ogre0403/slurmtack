@@ -18,6 +18,7 @@ type Store interface {
 	CreateExecution(ctx context.Context, exec *domain.Execution) error
 	GetExecution(ctx context.Context, id string) (*domain.Execution, error)
 	ListExecutions(ctx context.Context, nodeName string) ([]*domain.Execution, error)
+	ListActiveExecutions(ctx context.Context) ([]*domain.Execution, error)
 
 	// AdvanceState transitions the execution to newState only if the current
 	// state_version matches expectedVersion. On success, state_version is incremented.
