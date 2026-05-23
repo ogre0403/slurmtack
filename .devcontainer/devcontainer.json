@@ -1,0 +1,67 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the README at:
+// https://github.com/microsoft/vscode-dev-containers/tree/v0.205.2/containers/alpine
+{
+	"name": "golang",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"args": {
+			"INSTALL_PYTHON": "false",
+		}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"isudox.vscode-jetbrains-keybindings",
+				"vtkn.amazon-bedrock-copilot-chat",
+				"golang.Go",
+				"openai.chatgpt"
+			],
+			"settings": {
+				"terminal.integrated.defaultProfile.linux": "zsh",
+				"terminal.integrated.profiles.linux": {
+					"zsh": {
+						"path": "/bin/zsh"
+					},
+					"tmux-ai": {
+						"path": "/bin/zsh",
+						"args": [
+							"-lc",
+							"exec ${containerWorkspaceFolder}/.devcontainer/start-ai-workbench.sh"
+						]
+					}					
+				},
+			}
+		}
+	},
+	"features": {
+		// Install Coding Agent, Claude Code, OpenCode, Codex, and Gemini
+		"ghcr.io/anthropics/devcontainer-features/claude-code:1": {},
+		// "ghcr.io/stu-bell/devcontainer-features/open-code:0": {},
+		"ghcr.io/cirolosapio/devcontainers-features/alpine-node:0": {
+			"globalPackages": "@fission-ai/openspec@latest @openai/codex"
+		},
+		// Access host Docker inside Devcontainer
+		"ghcr.io/cirolosapio/devcontainers-features/alpine-docker-outside-of-docker:0": {},
+	},
+	"containerEnv": {
+		"WORKSPACE_FOLDER": "${containerWorkspaceFolder}",
+		//
+		"PAGER": "less -FRX",
+		"GIT_PAGER": "less -FRX",
+		"LESS": "FRX",
+		// Code Agent Configuration
+		"CLAUDE_CODE_USE_BEDROCK": "1",
+		"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000",
+		"AWS_BEARER_TOKEN_BEDROCK": "${localEnv:AWS_BEARER_TOKEN_BEDROCK}",
+		"AZURE_COGNITIVE_SERVICES_RESOURCE_NAME": "${localEnv:AZURE_COGNITIVE_SERVICES_RESOURCE_NAME}",	
+		"AZURE_OPENAI_API_KEY": "${localEnv:AZURE_OPENAI_API_KEY}",
+	},
+	"mounts": [
+		// "source=opencode_setting,target=/root/.local,type=volume",
+		"source=claude_setting,target=/root/.claude_setting,type=volume",
+		"source=codex_setting,target=/root/.codex,type=volume",
+	],
+	"initializeCommand": "sh .devcontainer/initializeCommand.sh",
+	"postCreateCommand": "sh .devcontainer/postCreateCommand.sh",
+	"postStartCommand": "sh .devcontainer/postStartCommand.sh",
+}
