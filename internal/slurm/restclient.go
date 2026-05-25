@@ -31,11 +31,11 @@ func WithPlaceholderSIFPath(path string) Option {
 }
 
 type RestClient struct {
-	baseURL             string
-	jwtToken            string
-	httpClient          *http.Client
-	amqpURL             string
-	placeholderSIFPath  string
+	baseURL            string
+	jwtToken           string
+	httpClient         *http.Client
+	amqpURL            string
+	placeholderSIFPath string
 }
 
 func NewRestClient(baseURL, jwtToken string, opts ...Option) *RestClient {
@@ -53,27 +53,33 @@ func NewRestClient(baseURL, jwtToken string, opts ...Option) *RestClient {
 }
 
 func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJobRequest) (*PlaceholderJobResult, error) {
-	envVars := []string{
-		"PATH=/usr/bin:/bin",
-		fmt.Sprintf("EXECUTION_ID=%s", req.ExecutionID),
-		fmt.Sprintf("AMQP_URL=%s", c.amqpURL),
-		fmt.Sprintf("SLURM_API_URL=%s", c.baseURL),
-		fmt.Sprintf("SLURM_JWT_TOKEN=%s", c.jwtToken),
+	// For API v38 job submission, it's easier and more robust to use script directly.
+	script := fmt.Sprintf("#!/bin/bash\n#SBATCH --job-name=gpu-switch-%s\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --exclusive=user\n", req.ExecutionID)
+	if req.Constraint != "" {
+		script += fmt.Sprintf("#SBATCH --constraint=%s\n", req.Constraint)
+	}
+	if req.Partition != "" {
+		script += fmt.Sprintf("#SBATCH --partition=%s\n", req.Partition)
 	}
 
-	script := fmt.Sprintf("#!/bin/bash\nsingularity run %s", c.placeholderSIFPath)
+	// Environment vars
+	script += fmt.Sprintf("export EXECUTION_ID=%s\n", req.ExecutionID)
+	script += fmt.Sprintf("export AMQP_URL=%s\n", c.amqpURL)
+	script += fmt.Sprintf("export SLURM_API_URL=%s\n", c.baseURL)
+	script += fmt.Sprintf("export SLURM_JWT_TOKEN=%s\n", c.jwtToken)
+
+	script += fmt.Sprintf("echo \"Running placeholder...\"\n")
+	script += fmt.Sprintf("echo \"SIF path: %s\"\n", c.placeholderSIFPath)
+	script += fmt.Sprintf("singularity run %s\n", c.placeholderSIFPath)
 
 	body := map[string]any{
+		"script": script,
 		"job": map[string]any{
 			"name":                      fmt.Sprintf("gpu-switch-%s", req.ExecutionID),
-			"nodes":                     "1",
-			"tasks":                     "1",
-			"exclusive":                 true,
-			"constraint":                req.Constraint,
-			"partition":                 req.Partition,
+			"environment":               map[string]string{"PATH": "/bin:/usr/bin:/usr/local/bin"},
 			"current_working_directory": "/tmp",
-			"environment":              envVars,
-			"script":                   script,
+			"standard_output":           fmt.Sprintf("/tmp/gpu-switch-%s.out", req.ExecutionID),
+			"standard_error":            fmt.Sprintf("/tmp/gpu-switch-%s.err", req.ExecutionID),
 		},
 	}
 
@@ -135,50 +141,13 @@ func (c *RestClient) GetNodeState(ctx context.Context, nodeName string) (*NodeSt
 }
 
 func (c *RestClient) DrainNode(ctx context.Context, nodeName, reason string) error {
-	body := map[string]any{
-		"state":  "drain",
-		"reason": reason,
-	}
-
-	resp, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/slurm/v0.0.38/node/%s", nodeName), body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	var result slurmErrorResponse
-	if err := c.decodeResponse(resp, &result); err != nil {
-		return err
-	}
-
-	if len(result.Errors) > 0 {
-		return c.apiError(resp.StatusCode, result.Errors)
-	}
-
-	return nil
+	// Fallback to scontrol since REST API seems to lack node update in this version
+	return fmt.Errorf("drain node via REST not supported in this version")
 }
 
 func (c *RestClient) ResumeNode(ctx context.Context, nodeName string) error {
-	body := map[string]any{
-		"state": "resume",
-	}
-
-	resp, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/slurm/v0.0.38/node/%s", nodeName), body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	var result slurmErrorResponse
-	if err := c.decodeResponse(resp, &result); err != nil {
-		return err
-	}
-
-	if len(result.Errors) > 0 {
-		return c.apiError(resp.StatusCode, result.Errors)
-	}
-
-	return nil
+	// Fallback to scontrol since REST API seems to lack node update in this version
+	return fmt.Errorf("resume node via REST not supported in this version")
 }
 
 func (c *RestClient) CancelJob(ctx context.Context, jobID string) error {
@@ -216,7 +185,8 @@ func (c *RestClient) doRequest(ctx context.Context, method, path string, body io
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.jwtToken)
+	req.Header.Set("X-SLURM-USER-NAME", "cloud-user")
+	req.Header.Set("X-SLURM-USER-TOKEN", c.jwtToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)

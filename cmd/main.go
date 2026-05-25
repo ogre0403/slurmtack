@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,7 +15,6 @@ import (
 	"github.com/slurmtack/slurmtack/internal/mq"
 	"github.com/slurmtack/slurmtack/internal/openstack"
 	"github.com/slurmtack/slurmtack/internal/orchestrator"
-	"github.com/slurmtack/slurmtack/internal/remote"
 	"github.com/slurmtack/slurmtack/internal/service"
 	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
@@ -40,48 +38,38 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sshRunner := remote.NewSSHRunner(remote.NewExecSSHExecutor(remote.SSHExecutorConfig{
-		User:    cfg.SSHUser,
-		Port:    cfg.SSHPort,
-		Options: splitSSHOptions(cfg.SSHOptions),
-	}))
+	var wg sync.WaitGroup
 
-	var slurmClient slurm.Client
-	if cfg.SlurmAPIURL != "" && cfg.SlurmJWTToken != "" {
+	var slurmClient *slurm.RestClient
+	if cfg.SlurmAPIURL != "" {
 		slurmClient = slurm.NewRestClient(
 			cfg.SlurmAPIURL,
 			cfg.SlurmJWTToken,
 			slurm.WithAMQPURL(cfg.AMQPURL),
 			slurm.WithPlaceholderSIFPath(cfg.PlaceholderSIFPath),
 		)
-		log.Printf("slurm: client configured for %s", cfg.SlurmAPIURL)
-	} else {
-		log.Printf("slurm: client not configured (set SLURM_API_URL and SLURM_JWT_TOKEN)")
 	}
 
 	var osClient openstack.Client
-	if cfg.OSAuthURL != "" && cfg.OSProjectName != "" && cfg.OSUsername != "" && cfg.OSPassword != "" {
-		osClient, err = openstack.NewGophecloudClient(ctx, openstack.AuthOpts{
+	if cfg.OSAuthURL != "" {
+		opts := openstack.AuthOpts{
 			AuthURL:           cfg.OSAuthURL,
 			Username:          cfg.OSUsername,
 			Password:          cfg.OSPassword,
 			ProjectName:       cfg.OSProjectName,
-			UserDomainName:    cfg.OSUserDomainName,
-			ProjectDomainName: cfg.OSProjectDomainName,
-		})
-		if err != nil {
-			log.Fatalf("openstack: %v", err)
+			UserDomainName:    "Default",
+			ProjectDomainName: "Default",
 		}
-		log.Printf("openstack: client configured for %s", cfg.OSAuthURL)
-	} else {
-		log.Printf("openstack: client not configured (set OS_AUTH_URL, OS_PROJECT_NAME, OS_USERNAME, OS_PASSWORD)")
+		var err error
+		osClient, err = openstack.NewGophecloudClient(ctx, opts)
+		if err != nil {
+			log.Fatalf("openstack client: %v", err)
+		}
 	}
-
-	var wg sync.WaitGroup
 
 	// Start orchestrator
 	runner := engine.NewRunner(sqlStore)
-	orch := orchestrator.New(sqlStore, runner, sshRunner, slurmClient, osClient, orchestrator.Config{
+	orch := orchestrator.New(sqlStore, runner, nil, slurmClient, osClient, orchestrator.Config{
 		TickInterval:    2 * time.Second,
 		SSHPollInterval: cfg.SSHPollInterval,
 		SSHPollTimeout:  cfg.SSHPollTimeout,
@@ -153,11 +141,4 @@ func main() {
 	case <-time.After(30 * time.Second):
 		log.Println("shutdown timed out waiting for goroutines")
 	}
-}
-
-func splitSSHOptions(options string) []string {
-	if strings.TrimSpace(options) == "" {
-		return nil
-	}
-	return strings.Fields(options)
 }
