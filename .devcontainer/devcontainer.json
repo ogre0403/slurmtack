@@ -14,7 +14,8 @@
 				"isudox.vscode-jetbrains-keybindings",
 				"vtkn.amazon-bedrock-copilot-chat",
 				"golang.Go",
-				"openai.chatgpt"
+				"openai.chatgpt",
+				"onnovalkering.vscode-singularity",
 			],
 			"settings": {
 				"terminal.integrated.defaultProfile.linux": "zsh",

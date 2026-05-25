@@ -1,4 +1,4 @@
-Bootstrap: library
+Bootstrap: docker
 From: alpine:3.19
 
 %files

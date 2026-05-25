@@ -7,10 +7,16 @@ OUTPUT_DIR="$SCRIPT_DIR/output"
 
 mkdir -p "$OUTPUT_DIR"
 
-echo "==> Building placeholder-agent (static binary)..."
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-  -o "$OUTPUT_DIR/placeholder-agent" \
-  "$PROJECT_ROOT/cmd/placeholder-agent/"
+echo "==> Building placeholder-agent (static binary via Docker)..."
+docker run --rm \
+  -v "$PROJECT_ROOT":/src \
+  -v "$OUTPUT_DIR":/out \
+  -w /src \
+  -e CGO_ENABLED=0 \
+  -e GOOS=linux \
+  -e GOARCH=amd64 \
+  golang:1.22.4-alpine \
+  go build -o /out/placeholder-agent ./cmd/placeholder-agent/
 
 echo "    Binary: $OUTPUT_DIR/placeholder-agent"
 

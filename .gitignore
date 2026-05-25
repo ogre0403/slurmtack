@@ -4,3 +4,4 @@ openspec/.vector-search.db*
 .env
 .claude/settings.local.json
 .spectra.yaml
+output/
