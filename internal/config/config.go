@@ -11,31 +11,41 @@ type Config struct {
 	ListenAddr string
 	DBPath     string
 
-	SlurmAPIURL   string
-	SlurmJWTToken string
-	OSAuthURL     string
-	OSProjectName string
-	OSUsername    string
-	OSPassword    string
+	SlurmAPIURL         string
+	SlurmJWTToken       string
+	OSAuthURL           string
+	OSProjectName       string
+	OSUsername          string
+	OSPassword          string
+	OSUserDomainName    string
+	OSProjectDomainName string
 	AMQPURL             string
 	SSHPollInterval     time.Duration
 	SSHPollTimeout      time.Duration
 	PlaceholderSIFPath  string
+	SSHUser             string
+	SSHPort             string
+	SSHOptions          string
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		APIToken:      os.Getenv("API_TOKEN"),
-		ListenAddr:    os.Getenv("LISTEN_ADDR"),
-		DBPath:        os.Getenv("DB_PATH"),
-		SlurmAPIURL:   os.Getenv("SLURM_API_URL"),
-		SlurmJWTToken: os.Getenv("SLURM_JWT_TOKEN"),
-		OSAuthURL:     os.Getenv("OS_AUTH_URL"),
-		OSProjectName: os.Getenv("OS_PROJECT_NAME"),
-		OSUsername:    os.Getenv("OS_USERNAME"),
-		OSPassword:    os.Getenv("OS_PASSWORD"),
-		AMQPURL:            os.Getenv("AMQP_URL"),
-		PlaceholderSIFPath: os.Getenv("PLACEHOLDER_SIF_PATH"),
+		APIToken:            os.Getenv("API_TOKEN"),
+		ListenAddr:          os.Getenv("LISTEN_ADDR"),
+		DBPath:              os.Getenv("DB_PATH"),
+		SlurmAPIURL:         os.Getenv("SLURM_API_URL"),
+		SlurmJWTToken:       os.Getenv("SLURM_JWT_TOKEN"),
+		OSAuthURL:           os.Getenv("OS_AUTH_URL"),
+		OSProjectName:       os.Getenv("OS_PROJECT_NAME"),
+		OSUsername:          os.Getenv("OS_USERNAME"),
+		OSPassword:          os.Getenv("OS_PASSWORD"),
+		OSUserDomainName:    os.Getenv("OS_USER_DOMAIN_NAME"),
+		OSProjectDomainName: os.Getenv("OS_PROJECT_DOMAIN_NAME"),
+		AMQPURL:             os.Getenv("AMQP_URL"),
+		PlaceholderSIFPath:  os.Getenv("PLACEHOLDER_SIF_PATH"),
+		SSHUser:             os.Getenv("SSH_USER"),
+		SSHPort:             os.Getenv("SSH_PORT"),
+		SSHOptions:          os.Getenv("SSH_OPTIONS"),
 	}
 
 	cfg.SSHPollInterval = parseDuration(os.Getenv("SSH_POLL_INTERVAL"), 10*time.Second)
@@ -50,6 +60,12 @@ func Load() (*Config, error) {
 	}
 	if cfg.DBPath == "" {
 		cfg.DBPath = "slurmtack.db"
+	}
+	if cfg.OSUserDomainName == "" {
+		cfg.OSUserDomainName = "Default"
+	}
+	if cfg.OSProjectDomainName == "" {
+		cfg.OSProjectDomainName = "Default"
 	}
 
 	return cfg, nil
