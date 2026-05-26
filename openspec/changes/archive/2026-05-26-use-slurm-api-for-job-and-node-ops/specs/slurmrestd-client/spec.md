@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Submit placeholder job
 
@@ -93,26 +93,3 @@ The client SHALL include the configured Slurm identity headers on every request 
 
 - **WHEN** slurmrestd returns HTTP 401
 - **THEN** client returns an error indicating authentication failure
-
-### Requirement: Connection and timeout handling
-
-The client SHALL use a configured HTTP timeout (default 30 seconds) for all requests. Connection failures MUST be distinguishable from API-level errors.
-
-#### Scenario: Request timeout
-
-- **WHEN** slurmrestd does not respond within the configured timeout
-- **THEN** client returns a timeout error (context.DeadlineExceeded or equivalent)
-
-#### Scenario: Connection refused
-
-- **WHEN** slurmrestd is unreachable (connection refused)
-- **THEN** client returns a connection error distinct from a slurmrestd API error
-
-### Requirement: Structured error type
-
-The client SHALL define a `SlurmAPIError` type that includes the HTTP status code and the list of error messages from slurmrestd's `errors` array. This type MUST implement the `error` interface.
-
-#### Scenario: Error inspection
-
-- **WHEN** a slurmrestd call fails with a parseable error response
-- **THEN** the returned error can be type-asserted to SlurmAPIError to inspect StatusCode and Messages

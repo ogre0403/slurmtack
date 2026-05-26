@@ -45,6 +45,8 @@ func main() {
 		slurmClient = slurm.NewRestClient(
 			cfg.SlurmAPIURL,
 			cfg.SlurmJWTToken,
+			slurm.WithSlurmUser(cfg.SlurmAPIUser),
+			slurm.WithAdminCredentials(cfg.SlurmAdminUser, cfg.SlurmAdminJWTToken),
 			slurm.WithAMQPURL(cfg.AMQPURL),
 			slurm.WithPlaceholderSIFPath(cfg.PlaceholderSIFPath),
 		)

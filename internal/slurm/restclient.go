@@ -30,9 +30,23 @@ func WithPlaceholderSIFPath(path string) Option {
 	return func(rc *RestClient) { rc.placeholderSIFPath = path }
 }
 
+func WithSlurmUser(user string) Option {
+	return func(rc *RestClient) { rc.slurmUser = user }
+}
+
+func WithAdminCredentials(user, token string) Option {
+	return func(rc *RestClient) {
+		rc.adminUser = user
+		rc.adminToken = token
+	}
+}
+
 type RestClient struct {
 	baseURL            string
 	jwtToken           string
+	slurmUser          string
+	adminUser          string
+	adminToken         string
 	httpClient         *http.Client
 	amqpURL            string
 	placeholderSIFPath string
@@ -40,8 +54,9 @@ type RestClient struct {
 
 func NewRestClient(baseURL, jwtToken string, opts ...Option) *RestClient {
 	rc := &RestClient{
-		baseURL:  strings.TrimRight(baseURL, "/"),
-		jwtToken: jwtToken,
+		baseURL:   strings.TrimRight(baseURL, "/"),
+		jwtToken:  jwtToken,
+		slurmUser: "cloud-user",
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -49,11 +64,17 @@ func NewRestClient(baseURL, jwtToken string, opts ...Option) *RestClient {
 	for _, o := range opts {
 		o(rc)
 	}
+	// Admin credentials default to workload credentials when not set.
+	if rc.adminUser == "" {
+		rc.adminUser = rc.slurmUser
+	}
+	if rc.adminToken == "" {
+		rc.adminToken = rc.jwtToken
+	}
 	return rc
 }
 
 func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJobRequest) (*PlaceholderJobResult, error) {
-	// For API v38 job submission, it's easier and more robust to use script directly.
 	script := fmt.Sprintf("#!/bin/bash\n#SBATCH --job-name=gpu-switch-%s\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --exclusive=user\n", req.ExecutionID)
 	if req.Constraint != "" {
 		script += fmt.Sprintf("#SBATCH --constraint=%s\n", req.Constraint)
@@ -67,6 +88,7 @@ func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJo
 	script += fmt.Sprintf("export AMQP_URL=%s\n", c.amqpURL)
 	script += fmt.Sprintf("export SLURM_API_URL=%s\n", c.baseURL)
 	script += fmt.Sprintf("export SLURM_JWT_TOKEN=%s\n", c.jwtToken)
+	script += fmt.Sprintf("export SLURM_API_USER=%s\n", c.slurmUser)
 
 	script += fmt.Sprintf("echo \"Running placeholder...\"\n")
 	script += fmt.Sprintf("echo \"SIF path: %s\"\n", c.placeholderSIFPath)
@@ -83,7 +105,7 @@ func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJo
 		},
 	}
 
-	resp, err := c.doJSON(ctx, http.MethodPost, "/slurm/v0.0.38/job/submit", body)
+	resp, err := c.doJSON(ctx, http.MethodPost, "/slurm/v0.0.40/job/submit", body)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +126,7 @@ func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJo
 }
 
 func (c *RestClient) GetNodeState(ctx context.Context, nodeName string) (*NodeState, error) {
-	resp, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/slurm/v0.0.38/node/%s", nodeName), nil)
+	resp, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/slurm/v0.0.40/node/%s", nodeName), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -141,17 +163,58 @@ func (c *RestClient) GetNodeState(ctx context.Context, nodeName string) (*NodeSt
 }
 
 func (c *RestClient) DrainNode(ctx context.Context, nodeName, reason string) error {
-	// Fallback to scontrol since REST API seems to lack node update in this version
-	return fmt.Errorf("drain node via REST not supported in this version")
+	body := map[string]any{
+		"state":  []string{"DRAIN"},
+		"reason": reason,
+	}
+	_, err := c.doJSONAdmin(ctx, http.MethodPost, fmt.Sprintf("/slurm/v0.0.40/node/%s", nodeName), body)
+	if err != nil {
+		if apiErr, ok := err.(*SlurmAPIError); ok && isDrainIdempotent(apiErr) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *RestClient) ResumeNode(ctx context.Context, nodeName string) error {
-	// Fallback to scontrol since REST API seems to lack node update in this version
-	return fmt.Errorf("resume node via REST not supported in this version")
+	body := map[string]any{
+		"state": []string{"RESUME"},
+	}
+	_, err := c.doJSONAdmin(ctx, http.MethodPost, fmt.Sprintf("/slurm/v0.0.40/node/%s", nodeName), body)
+	if err != nil {
+		if apiErr, ok := err.(*SlurmAPIError); ok && isResumeIdempotent(apiErr) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// isDrainIdempotent returns true when the API error indicates the node is already in drain/drained state.
+func isDrainIdempotent(e *SlurmAPIError) bool {
+	for _, msg := range e.Messages {
+		l := strings.ToLower(msg)
+		if strings.Contains(l, "already") && (strings.Contains(l, "drain") || strings.Contains(l, "drained")) {
+			return true
+		}
+	}
+	return false
+}
+
+// isResumeIdempotent returns true when the API error indicates the node is already in an active state.
+func isResumeIdempotent(e *SlurmAPIError) bool {
+	for _, msg := range e.Messages {
+		l := strings.ToLower(msg)
+		if strings.Contains(l, "already") && (strings.Contains(l, "resume") || strings.Contains(l, "idle") || strings.Contains(l, "active")) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *RestClient) CancelJob(ctx context.Context, jobID string) error {
-	resp, err := c.doRequest(ctx, http.MethodDelete, fmt.Sprintf("/slurm/v0.0.38/job/%s", jobID), nil)
+	resp, err := c.doRequest(ctx, http.MethodDelete, fmt.Sprintf("/slurm/v0.0.40/job/%s", jobID), nil)
 	if err != nil {
 		return err
 	}
@@ -177,7 +240,19 @@ func (c *RestClient) doJSON(ctx context.Context, method, path string, body any) 
 	return c.doRequest(ctx, method, path, bytes.NewReader(data))
 }
 
+func (c *RestClient) doJSONAdmin(ctx context.Context, method, path string, body any) (*http.Response, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling request body: %w", err)
+	}
+	return c.doRequestWithIdentity(ctx, method, path, bytes.NewReader(data), c.adminUser, c.adminToken)
+}
+
 func (c *RestClient) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	return c.doRequestWithIdentity(ctx, method, path, body, c.slurmUser, c.jwtToken)
+}
+
+func (c *RestClient) doRequestWithIdentity(ctx context.Context, method, path string, body io.Reader, slurmUser, slurmToken string) (*http.Response, error) {
 	url := c.baseURL + path
 
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
@@ -185,8 +260,8 @@ func (c *RestClient) doRequest(ctx context.Context, method, path string, body io
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
-	req.Header.Set("X-SLURM-USER-NAME", "cloud-user")
-	req.Header.Set("X-SLURM-USER-TOKEN", c.jwtToken)
+	req.Header.Set("X-SLURM-USER-NAME", slurmUser)
+	req.Header.Set("X-SLURM-USER-TOKEN", slurmToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)

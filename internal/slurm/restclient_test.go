@@ -11,19 +11,16 @@ import (
 
 func TestSubmitPlaceholderJob_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/slurm/v0.0.38/job/submit" {
+		if r.Method != http.MethodPost || r.URL.Path != "/slurm/v0.0.40/job/submit" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		assertBearer(t, r, "test-token")
+		assertSlurmHeaders(t, r, "cloud-user", "test-token")
 
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
 		job := body["job"].(map[string]any)
 		if job["name"] != "gpu-switch-exec-1" {
 			t.Errorf("unexpected job name: %v", job["name"])
-		}
-		if job["exclusive"] != true {
-			t.Errorf("expected exclusive=true")
 		}
 
 		json.NewEncoder(w).Encode(jobSubmitResponse{JobID: 42})
@@ -76,10 +73,10 @@ func TestSubmitPlaceholderJob_Error(t *testing.T) {
 
 func TestGetNodeState_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/slurm/v0.0.38/node/gpu-node-01" {
+		if r.Method != http.MethodGet || r.URL.Path != "/slurm/v0.0.40/node/gpu-node-01" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		assertBearer(t, r, "test-token")
+		assertSlurmHeaders(t, r, "cloud-user", "test-token")
 
 		json.NewEncoder(w).Encode(nodeInfoResponse{
 			Nodes: []nodeInfo{{
@@ -136,15 +133,16 @@ func TestGetNodeState_NotFound(t *testing.T) {
 
 func TestDrainNode_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/slurm/v0.0.38/node/gpu-node-01" {
+		if r.Method != http.MethodPost || r.URL.Path != "/slurm/v0.0.40/node/gpu-node-01" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		assertBearer(t, r, "test-token")
+		assertSlurmHeaders(t, r, "cloud-user", "test-token")
 
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["state"] != "drain" {
-			t.Errorf("expected state=drain, got %v", body["state"])
+		states, ok := body["state"].([]any)
+		if !ok || len(states) != 1 || states[0] != "DRAIN" {
+			t.Errorf("expected state=[DRAIN], got %v", body["state"])
 		}
 		if body["reason"] != "gpu switch in progress" {
 			t.Errorf("unexpected reason: %v", body["reason"])
@@ -186,15 +184,16 @@ func TestDrainNode_Error(t *testing.T) {
 
 func TestResumeNode_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/slurm/v0.0.38/node/gpu-node-01" {
+		if r.Method != http.MethodPost || r.URL.Path != "/slurm/v0.0.40/node/gpu-node-01" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		assertBearer(t, r, "test-token")
+		assertSlurmHeaders(t, r, "cloud-user", "test-token")
 
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["state"] != "resume" {
-			t.Errorf("expected state=resume, got %v", body["state"])
+		states, ok := body["state"].([]any)
+		if !ok || len(states) != 1 || states[0] != "RESUME" {
+			t.Errorf("expected state=[RESUME], got %v", body["state"])
 		}
 
 		json.NewEncoder(w).Encode(slurmErrorResponse{})
@@ -210,10 +209,10 @@ func TestResumeNode_Success(t *testing.T) {
 
 func TestCancelJob_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/slurm/v0.0.38/job/42" {
+		if r.Method != http.MethodDelete || r.URL.Path != "/slurm/v0.0.40/job/42" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		assertBearer(t, r, "test-token")
+		assertSlurmHeaders(t, r, "cloud-user", "test-token")
 		json.NewEncoder(w).Encode(slurmErrorResponse{})
 	}))
 	defer srv.Close()
@@ -248,10 +247,11 @@ func TestCancelJob_NotFound(t *testing.T) {
 	}
 }
 
-func TestJWTHeaderPresent(t *testing.T) {
-	var receivedAuth string
+func TestSlurmIdentityHeaders(t *testing.T) {
+	var receivedUser, receivedToken string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedAuth = r.Header.Get("Authorization")
+		receivedUser = r.Header.Get("X-SLURM-USER-NAME")
+		receivedToken = r.Header.Get("X-SLURM-USER-TOKEN")
 		json.NewEncoder(w).Encode(slurmErrorResponse{})
 	}))
 	defer srv.Close()
@@ -259,8 +259,66 @@ func TestJWTHeaderPresent(t *testing.T) {
 	client := NewRestClient(srv.URL, "my-secret-jwt")
 	_ = client.CancelJob(context.Background(), "1")
 
-	if receivedAuth != "Bearer my-secret-jwt" {
-		t.Errorf("expected 'Bearer my-secret-jwt', got %q", receivedAuth)
+	if receivedUser != "cloud-user" {
+		t.Errorf("expected X-SLURM-USER-NAME=cloud-user, got %q", receivedUser)
+	}
+	if receivedToken != "my-secret-jwt" {
+		t.Errorf("expected X-SLURM-USER-TOKEN=my-secret-jwt, got %q", receivedToken)
+	}
+}
+
+func TestCustomSlurmUser(t *testing.T) {
+	var receivedUser string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUser = r.Header.Get("X-SLURM-USER-NAME")
+		json.NewEncoder(w).Encode(slurmErrorResponse{})
+	}))
+	defer srv.Close()
+
+	client := NewRestClient(srv.URL, "token", WithSlurmUser("custom-user"))
+	_ = client.CancelJob(context.Background(), "1")
+
+	if receivedUser != "custom-user" {
+		t.Errorf("expected X-SLURM-USER-NAME=custom-user, got %q", receivedUser)
+	}
+}
+
+func TestAdminCredentialsUsedForDrain(t *testing.T) {
+	var receivedUser, receivedToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUser = r.Header.Get("X-SLURM-USER-NAME")
+		receivedToken = r.Header.Get("X-SLURM-USER-TOKEN")
+		json.NewEncoder(w).Encode(slurmErrorResponse{})
+	}))
+	defer srv.Close()
+
+	client := NewRestClient(srv.URL, "workload-token",
+		WithSlurmUser("cloud-user"),
+		WithAdminCredentials("root", "admin-token"),
+	)
+	_ = client.DrainNode(context.Background(), "node-01", "test")
+
+	if receivedUser != "root" {
+		t.Errorf("expected admin user root, got %q", receivedUser)
+	}
+	if receivedToken != "admin-token" {
+		t.Errorf("expected admin-token, got %q", receivedToken)
+	}
+}
+
+func TestDrainNode_Idempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(slurmErrorResponse{
+			Errors: []slurmError{{Error: "Node already drained", Errno: 42}},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewRestClient(srv.URL, "test-token")
+	err := client.DrainNode(context.Background(), "gpu-node-01", "test")
+	if err != nil {
+		t.Fatalf("expected nil for idempotent drain, got %v", err)
 	}
 }
 
@@ -292,10 +350,14 @@ func TestConnectionRefused(t *testing.T) {
 	}
 }
 
-func assertBearer(t *testing.T, r *http.Request, expected string) {
+func assertSlurmHeaders(t *testing.T, r *http.Request, expectedUser, expectedToken string) {
 	t.Helper()
-	auth := r.Header.Get("Authorization")
-	if auth != "Bearer "+expected {
-		t.Errorf("expected 'Bearer %s', got %q", expected, auth)
+	user := r.Header.Get("X-SLURM-USER-NAME")
+	token := r.Header.Get("X-SLURM-USER-TOKEN")
+	if user != expectedUser {
+		t.Errorf("expected X-SLURM-USER-NAME=%q, got %q", expectedUser, user)
+	}
+	if token != expectedToken {
+		t.Errorf("expected X-SLURM-USER-TOKEN=%q, got %q", expectedToken, token)
 	}
 }

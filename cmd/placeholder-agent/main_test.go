@@ -61,6 +61,58 @@ func TestLoadConfig_AllPresent(t *testing.T) {
 	if cfg.PollTimeout != 5*time.Minute {
 		t.Errorf("expected 5m, got %v", cfg.PollTimeout)
 	}
+	if cfg.SlurmAPIUser != "cloud-user" {
+		t.Errorf("expected default SlurmAPIUser=cloud-user, got %s", cfg.SlurmAPIUser)
+	}
+}
+
+func TestLoadConfig_CustomSlurmAPIUser(t *testing.T) {
+	t.Setenv("EXECUTION_ID", "exec-1")
+	t.Setenv("AMQP_URL", "amqp://localhost")
+	t.Setenv("SLURM_API_URL", "http://localhost")
+	t.Setenv("SLURM_JWT_TOKEN", "token")
+	t.Setenv("SLURM_API_USER", "custom-user")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SlurmAPIUser != "custom-user" {
+		t.Errorf("expected SlurmAPIUser=custom-user, got %s", cfg.SlurmAPIUser)
+	}
+}
+
+func TestGetNodeState_SlurmHeaders(t *testing.T) {
+	var receivedUser, receivedToken, receivedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUser = r.Header.Get("X-SLURM-USER-NAME")
+		receivedToken = r.Header.Get("X-SLURM-USER-TOKEN")
+		receivedPath = r.URL.Path
+		json.NewEncoder(w).Encode(map[string]any{
+			"nodes": []map[string]any{
+				{"state": []string{"idle"}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	cfg := &agentConfig{
+		SlurmAPIURL:  server.URL,
+		SlurmJWT:     "test-jwt",
+		SlurmAPIUser: "cloud-user",
+	}
+
+	_, _ = getNodeState(context.Background(), server.Client(), cfg, "gpu-01")
+
+	if receivedUser != "cloud-user" {
+		t.Errorf("expected X-SLURM-USER-NAME=cloud-user, got %q", receivedUser)
+	}
+	if receivedToken != "test-jwt" {
+		t.Errorf("expected X-SLURM-USER-TOKEN=test-jwt, got %q", receivedToken)
+	}
+	if receivedPath != "/slurm/v0.0.40/node/gpu-01" {
+		t.Errorf("expected v0.0.40 path, got %q", receivedPath)
+	}
 }
 
 func TestDiscoverHostname(t *testing.T) {

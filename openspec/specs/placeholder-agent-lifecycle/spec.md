@@ -2,7 +2,7 @@
 
 ### Requirement: Environment variable configuration
 
-The agent SHALL read all configuration from environment variables. It MUST exit with code 1 if any required variable (`EXECUTION_ID`, `AMQP_URL`, `SLURM_API_URL`, `SLURM_JWT_TOKEN`) is missing or empty.
+The agent SHALL read all configuration from environment variables. It MUST exit with code 1 if any required variable (`EXECUTION_ID`, `AMQP_URL`, `SLURM_API_URL`, `SLURM_JWT_TOKEN`) is missing or empty. `SLURM_API_USER` is optional and defaults to `cloud-user` when unset.
 
 #### Scenario: All required vars present
 
@@ -17,6 +17,11 @@ The agent SHALL read all configuration from environment variables. It MUST exit 
 #### Scenario: Missing AMQP_URL
 
 - **WHEN** agent starts without AMQP_URL set
+- **THEN** agent prints error to stderr and exits with code 1
+
+#### Scenario: Missing SLURM_JWT_TOKEN
+
+- **WHEN** agent starts without SLURM_JWT_TOKEN set
 - **THEN** agent prints error to stderr and exits with code 1
 
 ### Requirement: Publish allocation event
@@ -40,7 +45,7 @@ The agent SHALL discover its hostname via `os.Hostname()`, connect to RabbitMQ, 
 
 ### Requirement: Poll slurmrestd for drain state
 
-The agent SHALL poll `GET /slurm/v0.0.38/node/{hostname}` at the configured interval (default 5s) to check if the node has reached a drained state. Drained states are: `drained`, `drained*`, `down`, `down*`.
+The agent SHALL poll `GET /slurm/v0.0.40/node/{hostname}` at the configured interval (default 5s) to check if the node has reached a drained state. Each poll request MUST include `X-SLURM-USER-NAME` and `X-SLURM-USER-TOKEN` headers derived from the configured workload Slurm identity. Drained states are: `drained`, `drained*`, `down`, `down*`.
 
 #### Scenario: Node drains within timeout
 
@@ -51,6 +56,11 @@ The agent SHALL poll `GET /slurm/v0.0.38/node/{hostname}` at the configured inte
 
 - **WHEN** slurmrestd reports node state as "drained*" (drain pending jobs complete)
 - **THEN** agent considers this as drained and proceeds
+
+#### Scenario: Poll request uses Slurm identity headers
+
+- **WHEN** agent issues a drain-state poll request
+- **THEN** the HTTP request targets the v0.0.40 node endpoint and includes `X-SLURM-USER-NAME: <configured-or-default-user>` and `X-SLURM-USER-TOKEN: <workload-token>`
 
 #### Scenario: Poll timeout exceeded
 

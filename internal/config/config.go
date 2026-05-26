@@ -13,6 +13,9 @@ type Config struct {
 
 	SlurmAPIURL         string
 	SlurmJWTToken       string
+	SlurmAPIUser        string
+	SlurmAdminUser      string
+	SlurmAdminJWTToken  string
 	OSAuthURL           string
 	OSProjectName       string
 	OSUsername          string
@@ -35,6 +38,9 @@ func Load() (*Config, error) {
 		DBPath:              os.Getenv("DB_PATH"),
 		SlurmAPIURL:         os.Getenv("SLURM_API_URL"),
 		SlurmJWTToken:       os.Getenv("SLURM_JWT_TOKEN"),
+		SlurmAPIUser:        os.Getenv("SLURM_API_USER"),
+		SlurmAdminUser:      os.Getenv("SLURM_ADMIN_USER"),
+		SlurmAdminJWTToken:  os.Getenv("SLURM_ADMIN_JWT_TOKEN"),
 		OSAuthURL:           os.Getenv("OS_AUTH_URL"),
 		OSProjectName:       os.Getenv("OS_PROJECT_NAME"),
 		OSUsername:          os.Getenv("OS_USERNAME"),
@@ -61,6 +67,19 @@ func Load() (*Config, error) {
 	if cfg.DBPath == "" {
 		cfg.DBPath = "slurmtack.db"
 	}
+	if cfg.SlurmAPIURL != "" && cfg.SlurmJWTToken == "" {
+		return nil, fmt.Errorf("SLURM_JWT_TOKEN is required when SLURM_API_URL is set")
+	}
+	if cfg.SlurmAPIUser == "" {
+		cfg.SlurmAPIUser = "cloud-user"
+	}
+	if cfg.SlurmAdminUser == "" {
+		cfg.SlurmAdminUser = cfg.SlurmAPIUser
+	}
+	if cfg.SlurmAdminJWTToken == "" {
+		cfg.SlurmAdminJWTToken = cfg.SlurmJWTToken
+	}
+
 	if cfg.OSUserDomainName == "" {
 		cfg.OSUserDomainName = "Default"
 	}

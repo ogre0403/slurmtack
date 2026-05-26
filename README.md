@@ -111,7 +111,10 @@ curl http://127.0.0.1:8080/v1/switches \
 
 - `AMQP_URL`
 - `SLURM_API_URL`
-- `SLURM_JWT_TOKEN`
+- `SLURM_JWT_TOKEN` — 工作負載 JWT（job submit / cancel / node read）
+- `SLURM_API_USER` — 送出 job 的 Slurm 使用者（預設 `cloud-user`）
+- `SLURM_ADMIN_USER` — drain/resume 操作使用的管理員帳號（預設同 `SLURM_API_USER`）
+- `SLURM_ADMIN_JWT_TOKEN` — 管理員操作使用的 JWT（預設同 `SLURM_JWT_TOKEN`）
 - `OS_AUTH_URL`
 - `OS_PROJECT_NAME`
 - `OS_USERNAME`

@@ -26,6 +26,7 @@ type agentConfig struct {
 	AMQPURL      string
 	SlurmAPIURL  string
 	SlurmJWT     string
+	SlurmAPIUser string
 	SlurmJobID   string
 	PollInterval time.Duration
 	PollTimeout  time.Duration
@@ -135,11 +136,17 @@ func loadConfig() (*agentConfig, error) {
 	pollInterval := parseDuration(os.Getenv("POLL_INTERVAL"), 5*time.Second)
 	pollTimeout := parseDuration(os.Getenv("POLL_TIMEOUT"), 30*time.Minute)
 
+	slurmAPIUser := os.Getenv("SLURM_API_USER")
+	if slurmAPIUser == "" {
+		slurmAPIUser = "cloud-user"
+	}
+
 	return &agentConfig{
 		ExecutionID:  executionID,
 		AMQPURL:      amqpURL,
 		SlurmAPIURL:  strings.TrimRight(slurmAPIURL, "/"),
 		SlurmJWT:     slurmJWT,
+		SlurmAPIUser: slurmAPIUser,
 		SlurmJobID:   os.Getenv("SLURM_JOB_ID"),
 		PollInterval: pollInterval,
 		PollTimeout:  pollTimeout,
@@ -278,12 +285,13 @@ type nodeResponse struct {
 }
 
 func getNodeState(ctx context.Context, client *http.Client, cfg *agentConfig, hostname string) (string, error) {
-	url := fmt.Sprintf("%s/slurm/v0.0.38/node/%s", cfg.SlurmAPIURL, hostname)
+	url := fmt.Sprintf("%s/slurm/v0.0.40/node/%s", cfg.SlurmAPIURL, hostname)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.SlurmJWT)
+	req.Header.Set("X-SLURM-USER-NAME", cfg.SlurmAPIUser)
+	req.Header.Set("X-SLURM-USER-TOKEN", cfg.SlurmJWT)
 
 	resp, err := client.Do(req)
 	if err != nil {

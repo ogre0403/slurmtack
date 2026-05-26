@@ -16,7 +16,18 @@ func integrationClient(t *testing.T) *RestClient {
 	if apiURL == "" || token == "" {
 		t.Skip("SLURM_API_URL and SLURM_JWT_TOKEN must be set for integration tests")
 	}
-	return NewRestClient(apiURL, token)
+	opts := []Option{}
+	if user := os.Getenv("SLURM_API_USER"); user != "" {
+		opts = append(opts, WithSlurmUser(user))
+	}
+	if adminUser := os.Getenv("SLURM_ADMIN_USER"); adminUser != "" {
+		adminToken := os.Getenv("SLURM_ADMIN_JWT_TOKEN")
+		if adminToken == "" {
+			adminToken = token
+		}
+		opts = append(opts, WithAdminCredentials(adminUser, adminToken))
+	}
+	return NewRestClient(apiURL, token, opts...)
 }
 
 func TestIntegration_SubmitAndCancelJob(t *testing.T) {
