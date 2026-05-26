@@ -14,7 +14,7 @@ import (
 func TestDryRunSlurmToOpenStack(t *testing.T) {
 	ctx := context.Background()
 	s := store.NewMemoryStore()
-	r := NewRunner(s)
+	r := NewRunner(s, nil)
 	tmpDir := t.TempDir()
 	ew := evidence.NewWriter(tmpDir)
 	logger := log.New(os.Stderr, "", 0)
@@ -46,7 +46,7 @@ func TestDryRunSlurmToOpenStack(t *testing.T) {
 func TestDryRunOpenStackToSlurm(t *testing.T) {
 	ctx := context.Background()
 	s := store.NewMemoryStore()
-	r := NewRunner(s)
+	r := NewRunner(s, nil)
 	tmpDir := t.TempDir()
 	ew := evidence.NewWriter(tmpDir)
 	logger := log.New(os.Stderr, "", 0)

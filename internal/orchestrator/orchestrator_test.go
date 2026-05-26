@@ -68,12 +68,12 @@ func TestOrchestratorTickProcessesActiveExecutions(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	runner := engine.NewRunner(s)
+	runner := engine.NewRunner(s, nil)
 	orch := orchestrator.New(s, runner, nil, nil, nil, orchestrator.Config{
 		TickInterval:    100 * time.Millisecond,
 		SSHPollInterval: 1 * time.Second,
 		SSHPollTimeout:  5 * time.Second,
-	})
+	}, nil)
 
 	tickCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	defer cancel()
@@ -112,12 +112,12 @@ func TestOrchestratorSkipsWaitingStates(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	runner := engine.NewRunner(s)
+	runner := engine.NewRunner(s, nil)
 	orch := orchestrator.New(s, runner, nil, nil, nil, orchestrator.Config{
 		TickInterval:    100 * time.Millisecond,
 		SSHPollInterval: 1 * time.Second,
 		SSHPollTimeout:  5 * time.Second,
-	})
+	}, nil)
 
 	tickCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	defer cancel()

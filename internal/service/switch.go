@@ -5,10 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/slurmtack/slurmtack/internal/domain"
 	"github.com/slurmtack/slurmtack/internal/store"
+	"github.com/slurmtack/slurmtack/internal/trace"
 )
 
 type SwitchRequest struct {
@@ -19,11 +21,12 @@ type SwitchRequest struct {
 }
 
 type SwitchService struct {
-	store store.Store
+	store  store.Store
+	logger *slog.Logger
 }
 
-func NewSwitchService(s store.Store) *SwitchService {
-	return &SwitchService{store: s}
+func NewSwitchService(s store.Store, logger *slog.Logger) *SwitchService {
+	return &SwitchService{store: s, logger: trace.OrDefault(logger)}
 }
 
 func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (string, error) {
@@ -62,6 +65,13 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 	if err := s.store.CreateExecution(ctx, exec); err != nil {
 		return "", fmt.Errorf("creating execution: %w", err)
 	}
+
+	s.logger.Info(trace.EventRequestAccepted,
+		"execution_id", id,
+		"node_name", req.NodeName,
+		"direction", string(req.Direction),
+		"requested_by", req.RequestedBy,
+	)
 
 	return id, nil
 }

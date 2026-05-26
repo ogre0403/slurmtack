@@ -27,7 +27,7 @@ func setupTestServer(t *testing.T) *Server {
 	}
 	t.Cleanup(func() { sqlStore.Close() })
 
-	svc := service.NewSwitchService(sqlStore)
+	svc := service.NewSwitchService(sqlStore, nil)
 	return NewServer(":0", "test-token", sqlStore, svc)
 }
 

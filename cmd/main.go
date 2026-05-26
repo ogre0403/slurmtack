@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"sync"
@@ -26,13 +27,14 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	baseLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	sqlStore, err := store.NewSQLiteStore(cfg.DBPath)
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}
 	defer sqlStore.Close()
 
-	svc := service.NewSwitchService(sqlStore)
+	svc := service.NewSwitchService(sqlStore, baseLogger)
 	srv := api.NewServer(cfg.ListenAddr, cfg.APIToken, sqlStore, svc)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -70,12 +72,12 @@ func main() {
 	}
 
 	// Start orchestrator
-	runner := engine.NewRunner(sqlStore)
+	runner := engine.NewRunner(sqlStore, baseLogger)
 	orch := orchestrator.New(sqlStore, runner, nil, slurmClient, osClient, orchestrator.Config{
 		TickInterval:    2 * time.Second,
 		SSHPollInterval: cfg.SSHPollInterval,
 		SSHPollTimeout:  cfg.SSHPollTimeout,
-	})
+	}, baseLogger)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -95,7 +97,7 @@ func main() {
 			if err := mq.DeclareTopology(mqConn); err != nil {
 				log.Fatalf("mq: topology declaration failed: %v", err)
 			}
-			consumer := mq.NewConsumer(mqConn, sqlStore)
+			consumer := mq.NewConsumer(mqConn, sqlStore, baseLogger)
 			wg.Add(1)
 			go func() {
 				defer wg.Done()

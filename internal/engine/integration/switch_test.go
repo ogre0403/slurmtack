@@ -16,7 +16,7 @@ import (
 func TestSlurmToOpenStackFullFlow(t *testing.T) {
 	ctx := context.Background()
 	s := store.NewMemoryStore()
-	runner := engine.NewRunner(s)
+	runner := engine.NewRunner(s, nil)
 	slurmClient := NewFakeSlurmClient()
 	slurmClient.NextJobID = "job-100"
 	slurmClient.Nodes["gpu-01"] = &slurmPkg.NodeState{
@@ -27,7 +27,7 @@ func TestSlurmToOpenStackFullFlow(t *testing.T) {
 
 	osClient := NewFakeOpenStackClient()
 
-	svc := service.NewSwitchService(s)
+	svc := service.NewSwitchService(s, nil)
 	allocHandler := slurmPkg.NewAllocationHandler(s, runner, slurmClient)
 
 	execID, err := svc.RequestSwitch(ctx, service.SwitchRequest{
@@ -128,7 +128,7 @@ func TestSlurmToOpenStackFullFlow(t *testing.T) {
 func TestOpenStackToSlurmFullFlow(t *testing.T) {
 	ctx := context.Background()
 	s := store.NewMemoryStore()
-	runner := engine.NewRunner(s)
+	runner := engine.NewRunner(s, nil)
 	slurmClient := NewFakeSlurmClient()
 	slurmClient.Nodes["gpu-02"] = &slurmPkg.NodeState{
 		NodeName: "gpu-02",
@@ -141,7 +141,7 @@ func TestOpenStackToSlurmFullFlow(t *testing.T) {
 		Host: "gpu-02", Enabled: false, State: "down",
 	}
 
-	svc := service.NewSwitchService(s)
+	svc := service.NewSwitchService(s, nil)
 
 	execID, err := svc.RequestSwitch(ctx, service.SwitchRequest{
 		NodeName:    "gpu-02",
@@ -221,7 +221,7 @@ func TestOpenStackToSlurmFullFlow(t *testing.T) {
 func TestOpenStackToSlurmPrecheckBlocksWithInstances(t *testing.T) {
 	ctx := context.Background()
 	s := store.NewMemoryStore()
-	runner := engine.NewRunner(s)
+	runner := engine.NewRunner(s, nil)
 
 	osClient := NewFakeOpenStackClient()
 	osClient.Instances["gpu-03"] = []openstack.Instance{{ID: "vm-1", Name: "test-vm", Status: "ACTIVE"}}
@@ -229,7 +229,7 @@ func TestOpenStackToSlurmPrecheckBlocksWithInstances(t *testing.T) {
 		Host: "gpu-03", Enabled: false, State: "down",
 	}
 
-	svc := service.NewSwitchService(s)
+	svc := service.NewSwitchService(s, nil)
 	execID, _ := svc.RequestSwitch(ctx, service.SwitchRequest{
 		NodeName:    "gpu-03",
 		Direction:   domain.DirectionOpenStackToSlurm,

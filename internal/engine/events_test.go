@@ -23,7 +23,7 @@ func TestEventHandlerRejectsDuplicateVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := NewRunner(s)
+	r := NewRunner(s, nil)
 	eh := NewEventHandler(s, r)
 
 	err := eh.Handle(ctx, Event{
@@ -53,7 +53,7 @@ func TestEventHandlerRejectsWrongState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := NewRunner(s)
+	r := NewRunner(s, nil)
 	eh := NewEventHandler(s, r)
 
 	err := eh.Handle(ctx, Event{
@@ -83,7 +83,7 @@ func TestEventHandlerAcceptsValidDrained(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := NewRunner(s)
+	r := NewRunner(s, nil)
 	eh := NewEventHandler(s, r)
 
 	err := eh.Handle(ctx, Event{
@@ -115,7 +115,7 @@ func TestEventHandlerRejectsTerminalExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := NewRunner(s)
+	r := NewRunner(s, nil)
 	eh := NewEventHandler(s, r)
 
 	err := eh.Handle(ctx, Event{

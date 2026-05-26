@@ -308,3 +308,84 @@ MQ consumer 收到後，會把 execution 從 `source_quiescing` 推進到 `sourc
 - advanced flow: RabbitMQ + placeholder agent 的 Slurm-to-OpenStack 執行路徑
 
 目前主程式已完成 Slurm、OpenStack、SSH runner 的基本接線。要真正跑完整切換，重點已經不是補 wiring，而是提供可用的外部端點、認證、shared SIF 路徑與 SSH 連線條件。
+
+---
+
+## Trace Logging（除錯指南）
+
+Daemon 啟動時會把所有 log 以 JSON 格式寫到 stderr，預設 level 為 `Info`。每一個 log entry 都帶有結構化的 key/value，方便直接用 `jq` 篩選。
+
+### 標準欄位
+
+| 欄位 | 說明 |
+|---|---|
+| `execution_id` | 本次切換的唯一 ID |
+| `direction` | `slurm_to_openstack` 或 `openstack_to_slurm` |
+| `current_state` | 觸發這個 log 時的狀態機狀態 |
+| `state_version` | 當時的 optimistic-lock 版本號 |
+| `node_name` | GPU node hostname（若已知） |
+| `action` | orchestrator 正在執行的 action 名稱 |
+| `step_name` | engine step handler 的名稱 |
+
+### 事件詞彙
+
+| `msg` 值 | 觸發時機 |
+|---|---|
+| `request.accepted` | API 接到切換請求並建立 execution |
+| `action.selected` | orchestrator tick 選定要執行的 action |
+| `action.succeeded` | action 成功完成（如 acquire_lease） |
+| `action.failed` | action 執行失敗，即將進入 failed state |
+| `transition.requested` | runner 嘗試推進狀態機 |
+| `transition.succeeded` | 狀態機推進成功 |
+| `transition.failed` | 狀態機推進失敗（無效轉換或 store error） |
+| `wait.entered` | 進入非同步等待（allocation / drained / ssh） |
+| `wait.progress` | 等待中收到一個事件或輪詢一次 |
+| `wait.satisfied` | 等待條件達成，可繼續推進 |
+| `wait.timeout` | 等待逾時（目前只有 SSH reachability） |
+| `step.started` | RunStep 開始執行某個 step handler |
+| `step.succeeded` | step handler 成功回傳 |
+| `step.failed` | step handler 回傳錯誤 |
+| `execution.completed` | execution 成功走到 `completed` 狀態 |
+| `execution.failed` | execution 進入任一 failed terminal 狀態 |
+
+### 常用 jq 篩選範例
+
+追蹤單一 execution 的完整生命週期：
+
+```bash
+journalctl -u slurmtack -o cat | jq -c 'select(.execution_id == "YOUR_EXEC_ID")'
+```
+
+只看 warning 以上（失敗或異常事件）：
+
+```bash
+journalctl -u slurmtack -o cat | jq -c 'select(.level == "WARN" or .level == "ERROR")'
+```
+
+查看所有 action 選擇紀錄（了解 orchestrator 決策路徑）：
+
+```bash
+journalctl -u slurmtack -o cat | jq -c 'select(.msg == "action.selected")'
+```
+
+查看某個 node 的所有等待進入與滿足事件：
+
+```bash
+journalctl -u slurmtack -o cat | \
+  jq -c 'select(.node_name == "gpu-01") | select(.msg | startswith("wait."))'
+```
+
+追蹤 SSH reachability polling（Debug level，需將 daemon 的 slog level 調為 Debug）：
+
+```bash
+# 在 cmd/main.go 將 slog.LevelInfo 改為 slog.LevelDebug 後重啟
+journalctl -u slurmtack -o cat | jq -c 'select(.msg == "wait.progress")'
+```
+
+### 排查 execution 卡住
+
+1. 先確認 execution 的當前狀態：`GET /api/v1/switch/{id}`
+2. 用 `jq` 過濾該 `execution_id` 的所有 log
+3. 找最後一筆 `action.selected` 看 orchestrator 最後選了什麼
+4. 若卡在 wait state，確認對應的 MQ 訊息（`wait.progress` → `wait.satisfied` 鏈）是否出現
+5. 若出現 `action.failed` 或 `step.failed`，log 的 `error` 欄位會說明原因

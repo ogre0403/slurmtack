@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/slurmtack/slurmtack/internal/domain"
@@ -12,6 +13,7 @@ import (
 	"github.com/slurmtack/slurmtack/internal/remote"
 	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
+	"github.com/slurmtack/slurmtack/internal/trace"
 )
 
 type Config struct {
@@ -27,9 +29,10 @@ type Orchestrator struct {
 	slurm     slurm.Client
 	openstack openstack.Client
 	cfg       Config
+	logger    *slog.Logger
 }
 
-func New(s store.Store, runner *engine.Runner, sshRunner remote.Runner, slurmClient slurm.Client, osClient openstack.Client, cfg Config) *Orchestrator {
+func New(s store.Store, runner *engine.Runner, sshRunner remote.Runner, slurmClient slurm.Client, osClient openstack.Client, cfg Config, logger *slog.Logger) *Orchestrator {
 	return &Orchestrator{
 		store:     s,
 		runner:    runner,
@@ -37,6 +40,7 @@ func New(s store.Store, runner *engine.Runner, sshRunner remote.Runner, slurmCli
 		slurm:     slurmClient,
 		openstack: osClient,
 		cfg:       cfg,
+		logger:    trace.OrDefault(logger),
 	}
 }
 
@@ -69,11 +73,42 @@ func (o *Orchestrator) tick(ctx context.Context) {
 	}
 }
 
+func actionName(a action) string {
+	switch a {
+	case actionSubmitPlaceholder:
+		return "submit_placeholder"
+	case actionAcquireLease:
+		return "acquire_lease"
+	case actionPrecheck:
+		return "precheck"
+	case actionAcquireLeaseAndPrecheck:
+		return "acquire_lease_and_precheck"
+	case actionQuiesce:
+		return "quiesce"
+	case actionReconfigure:
+		return "reconfigure"
+	case actionReboot:
+		return "reboot"
+	case actionSSHPoll:
+		return "ssh_poll"
+	case actionAttach:
+		return "attach"
+	case actionVerify:
+		return "verify"
+	case actionComplete:
+		return "complete"
+	}
+	return "unknown"
+}
+
 func (o *Orchestrator) processExecution(ctx context.Context, exec *domain.Execution) {
 	action := o.determineAction(exec)
 	if action == actionNone {
 		return
 	}
+
+	execLog := trace.ForExecution(o.logger, exec)
+	execLog.Info(trace.EventActionSelected, "action", actionName(action))
 
 	err := o.executeAction(ctx, exec, action)
 	if err == nil {
@@ -81,13 +116,14 @@ func (o *Orchestrator) processExecution(ctx context.Context, exec *domain.Execut
 	}
 
 	if errors.Is(err, store.ErrVersionConflict) {
-		log.Printf("orchestrator: version conflict for %s, skipping", exec.ID)
+		execLog.Info("orchestrator.version_conflict", "action", actionName(action))
 		return
 	}
 
+	execLog.Warn(trace.EventActionFailed, "action", actionName(action), "error", err.Error())
 	failClass := classifyFailure(exec.CurrentState)
 	if failErr := o.runner.FailExecution(ctx, exec.ID, failClass, "step_error", err.Error()); failErr != nil {
-		log.Printf("orchestrator: failed to mark execution %s as failed: %v", exec.ID, failErr)
+		execLog.Warn("orchestrator.fail_execution_error", "error", failErr.Error())
 	}
 }
 
@@ -226,6 +262,11 @@ func (o *Orchestrator) doSubmitPlaceholder(ctx context.Context, exec *domain.Exe
 		return err
 	}
 
+	trace.ForExecution(o.logger, exec).Info(trace.EventWaitEntered,
+		"action", "submit_placeholder",
+		"wait_for", "allocation_event",
+		"job_id", result.JobID,
+	)
 	return o.runner.Transition(ctx, exec.ID, domain.StateAwaitingSourceAllocation)
 }
 
@@ -247,6 +288,10 @@ func (o *Orchestrator) doAcquireLease(ctx context.Context, exec *domain.Executio
 		return err
 	}
 
+	trace.ForExecution(o.logger, exec).Info(trace.EventActionSucceeded,
+		"action", "acquire_lease",
+		"node_name", exec.NodeName,
+	)
 	return o.runner.Transition(ctx, exec.ID, domain.StateLocked)
 }
 
@@ -270,6 +315,10 @@ func (o *Orchestrator) doQuiesce(ctx context.Context, exec *domain.Execution) er
 		if err := o.slurm.DrainNode(ctx, exec.NodeName, "gpu-switch:"+exec.ID); err != nil {
 			return err
 		}
+		trace.ForExecution(o.logger, exec).Info(trace.EventWaitEntered,
+			"action", "quiesce",
+			"wait_for", "drained_event",
+		)
 	} else {
 		if o.openstack == nil {
 			return errors.New("openstack client not configured")
@@ -277,6 +326,10 @@ func (o *Orchestrator) doQuiesce(ctx context.Context, exec *domain.Execution) er
 		if err := o.openstack.DisableComputeService(ctx, exec.NodeName, "gpu-switch:"+exec.ID); err != nil {
 			return err
 		}
+		trace.ForExecution(o.logger, exec).Info(trace.EventWaitEntered,
+			"action", "quiesce",
+			"wait_for", "drained_event",
+		)
 	}
 
 	return o.runner.Transition(ctx, exec.ID, domain.StateSourceQuiescing)
@@ -300,15 +353,21 @@ func (o *Orchestrator) doReboot(ctx context.Context, exec *domain.Execution) err
 	// reboot command may return error as connection drops
 	_ = err
 
+	trace.ForExecution(o.logger, exec).Info(trace.EventWaitEntered,
+		"action", "reboot",
+		"wait_for", "ssh_reachability",
+	)
 	return o.runner.Transition(ctx, exec.ID, domain.StateRebooting)
 }
 
 func (o *Orchestrator) doSSHPoll(ctx context.Context, exec *domain.Execution) error {
+	execLog := trace.ForExecution(o.logger, exec)
 	err := PollSSHReachable(ctx, o.sshRunner, exec.NodeName, ReachabilityConfig{
 		Interval: o.cfg.SSHPollInterval,
 		Timeout:  o.cfg.SSHPollTimeout,
-	})
+	}, o.logger)
 	if errors.Is(err, ErrSSHPollTimeout) {
+		execLog.Warn(trace.EventWaitTimeout, "action", "ssh_poll")
 		return o.runner.FailExecution(ctx, exec.ID, domain.FailureUnknownAfterReboot, "ssh_poll_timeout", "host did not become reachable within timeout")
 	}
 	if err != nil {
@@ -347,7 +406,12 @@ func (o *Orchestrator) doComplete(ctx context.Context, exec *domain.Execution) e
 		return err
 	}
 
-	return o.runner.Transition(ctx, exec.ID, domain.StateCompleted)
+	if err := o.runner.Transition(ctx, exec.ID, domain.StateCompleted); err != nil {
+		return err
+	}
+
+	trace.ForExecution(o.logger, exec).Info(trace.EventExecutionCompleted, "action", "complete")
+	return nil
 }
 
 func classifyFailure(state domain.SwitchState) domain.FailureClass {

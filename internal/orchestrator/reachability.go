@@ -2,10 +2,11 @@ package orchestrator
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/slurmtack/slurmtack/internal/remote"
+	"github.com/slurmtack/slurmtack/internal/trace"
 )
 
 type ReachabilityConfig struct {
@@ -13,7 +14,10 @@ type ReachabilityConfig struct {
 	Timeout  time.Duration
 }
 
-func PollSSHReachable(ctx context.Context, runner remote.Runner, host string, cfg ReachabilityConfig) error {
+func PollSSHReachable(ctx context.Context, runner remote.Runner, host string, cfg ReachabilityConfig, logger *slog.Logger) error {
+	logger = trace.OrDefault(logger)
+	logger.Info(trace.EventWaitEntered, "component", "reachability", "host", host, "wait_for", "ssh_reachability")
+
 	deadline := time.After(cfg.Timeout)
 	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
@@ -23,6 +27,7 @@ func PollSSHReachable(ctx context.Context, runner remote.Runner, host string, cf
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
+			logger.Warn(trace.EventWaitTimeout, "component", "reachability", "host", host)
 			return ErrSSHPollTimeout
 		case <-ticker.C:
 			attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -33,10 +38,10 @@ func PollSSHReachable(ctx context.Context, runner remote.Runner, host string, cf
 			})
 			cancel()
 			if err == nil {
-				log.Printf("orchestrator: host %s is reachable", host)
+				logger.Info(trace.EventWaitSatisfied, "component", "reachability", "host", host)
 				return nil
 			}
-			log.Printf("orchestrator: ssh poll to %s failed: %v", host, err)
+			logger.Debug(trace.EventWaitProgress, "component", "reachability", "host", host, "error", err.Error())
 		}
 	}
 }
