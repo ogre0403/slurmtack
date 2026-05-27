@@ -11,11 +11,14 @@ RUN CGO_ENABLED=1 go build -o /slurmtack ./cmd/
 
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates && \
-    adduser -D -H slurmtack && \
-    mkdir -p /data && chown slurmtack /data
+RUN apk add --no-cache ca-certificates openssh-client && \
+    adduser -D -h /home/slurmtack slurmtack && \
+    mkdir -p /data /home/slurmtack/.ssh /run/secrets && \
+    chown -R slurmtack:slurmtack /data /home/slurmtack && \
+    chmod 700 /home/slurmtack/.ssh
 
 COPY --from=build /slurmtack /usr/local/bin/slurmtack
 
+ENV HOME=/home/slurmtack
 USER slurmtack
 ENTRYPOINT ["slurmtack"]
