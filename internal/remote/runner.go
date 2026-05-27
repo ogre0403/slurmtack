@@ -33,7 +33,7 @@ type SSHRunner struct {
 }
 
 type SSHExecutor interface {
-	Run(ctx context.Context, host string, command string, args []string, timeout time.Duration) (stdout, stderr string, exitCode int, err error)
+	Run(ctx context.Context, req CommandRequest) (stdout, stderr string, exitCode int, err error)
 }
 
 func NewSSHRunner(executor SSHExecutor) *SSHRunner {
@@ -41,13 +41,8 @@ func NewSSHRunner(executor SSHExecutor) *SSHRunner {
 }
 
 func (r *SSHRunner) Execute(ctx context.Context, req CommandRequest) (*CommandResult, error) {
-	args := append([]string{
-		"--execution-id", req.ExecutionID,
-		"--step-name", req.StepName,
-	}, req.Args...)
-
 	start := time.Now()
-	stdout, stderr, exitCode, err := r.executor.Run(ctx, req.Host, req.Command, args, req.Timeout)
+	stdout, stderr, exitCode, err := r.executor.Run(ctx, req)
 	duration := time.Since(start)
 
 	if err != nil {

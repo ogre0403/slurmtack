@@ -75,7 +75,7 @@ func main() {
 
 	// Start orchestrator
 	runner := engine.NewRunner(sqlStore, baseLogger)
-	sshRunner := buildSSHRunner(cfg)
+	sshRunner := buildSSHRunner(cfg, baseLogger)
 	orch := orchestrator.New(sqlStore, runner, sshRunner, slurmClient, osClient, orchestrator.Config{
 		TickInterval:    2 * time.Second,
 		SSHPollInterval: cfg.SSHPollInterval,
@@ -150,12 +150,12 @@ func main() {
 	}
 }
 
-func buildSSHRunner(cfg *config.Config) remote.Runner {
+func buildSSHRunner(cfg *config.Config, logger *slog.Logger) remote.Runner {
 	if cfg == nil || !cfg.SSHRunnerEnabled() {
 		return nil
 	}
 
-	executor := remote.NewExecSSHExecutor(buildSSHExecutorConfig(cfg))
+	executor := remote.NewExecSSHExecutor(buildSSHExecutorConfig(cfg), logger)
 	return remote.NewSSHRunner(executor)
 }
 

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
-	"time"
+
+	"github.com/slurmtack/slurmtack/internal/trace"
 )
 
 type SSHExecutorConfig struct {
@@ -18,21 +20,31 @@ type SSHExecutorConfig struct {
 
 type ExecSSHExecutor struct {
 	config SSHExecutorConfig
+	logger *slog.Logger
 }
 
-func NewExecSSHExecutor(cfg SSHExecutorConfig) *ExecSSHExecutor {
-	return &ExecSSHExecutor{config: cfg}
+type sshInvocation struct {
+	target        string
+	remoteCommand string
+	args          []string
 }
 
-func (e *ExecSSHExecutor) Run(ctx context.Context, host string, command string, args []string, timeout time.Duration) (stdout, stderr string, exitCode int, err error) {
+func NewExecSSHExecutor(cfg SSHExecutorConfig, logger *slog.Logger) *ExecSSHExecutor {
+	return &ExecSSHExecutor{config: cfg, logger: trace.OrDefault(logger)}
+}
+
+func (e *ExecSSHExecutor) Run(ctx context.Context, req CommandRequest) (stdout, stderr string, exitCode int, err error) {
 	runCtx := ctx
 	var cancel context.CancelFunc
-	if timeout > 0 {
-		runCtx, cancel = context.WithTimeout(ctx, timeout)
+	if req.Timeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, req.Timeout)
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(runCtx, "ssh", e.buildSSHArgs(host, command, args)...)
+	invocation := e.renderInvocation(req)
+	e.logDispatch(req, invocation)
+
+	cmd := exec.CommandContext(runCtx, "ssh", invocation.args...)
 	var stdoutBuf bytes.Buffer
 	var stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
@@ -53,8 +65,7 @@ func (e *ExecSSHExecutor) Run(ctx context.Context, host string, command string, 
 	return stdout, stderr, -1, fmt.Errorf("ssh command failed: %w", err)
 }
 
-func (e *ExecSSHExecutor) buildSSHArgs(host string, command string, args []string) []string {
-
+func (e *ExecSSHExecutor) renderInvocation(req CommandRequest) sshInvocation {
 	sshArgs := []string{"-o", "BatchMode=yes"}
 	if e.config.Port != "" {
 		sshArgs = append(sshArgs, "-p", e.config.Port)
@@ -69,19 +80,39 @@ func (e *ExecSSHExecutor) buildSSHArgs(host string, command string, args []strin
 		sshArgs = append(sshArgs, "-o", opt)
 	}
 
-	target := host
+	target := req.Host
 	if e.config.User != "" {
-		target = e.config.User + "@" + host
+		target = e.config.User + "@" + req.Host
 	}
 
-	remoteCommand := command
-	if len(args) > 0 {
-		remoteCommand += " " + shellQuoteArgs(args)
+	remoteCommand := req.Command
+	if len(req.Args) > 0 {
+		remoteCommand += " " + shellQuoteArgs(req.Args)
 	}
 
 	sshArgs = append(sshArgs, target, remoteCommand)
 
-	return sshArgs
+	return sshInvocation{
+		target:        target,
+		remoteCommand: remoteCommand,
+		args:          sshArgs,
+	}
+}
+
+func (e *ExecSSHExecutor) logDispatch(req CommandRequest, invocation sshInvocation) {
+	attrs := []any{
+		"component", "remote",
+		"target", invocation.target,
+		"remote_command", invocation.remoteCommand,
+	}
+	if req.ExecutionID != "" {
+		attrs = append(attrs, "execution_id", req.ExecutionID)
+	}
+	if req.StepName != "" {
+		attrs = append(attrs, "step_name", req.StepName)
+	}
+
+	e.logger.Info(trace.EventSSHDispatch, attrs...)
 }
 
 func shellQuoteArgs(args []string) string {

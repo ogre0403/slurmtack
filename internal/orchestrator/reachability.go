@@ -14,7 +14,9 @@ type ReachabilityConfig struct {
 	Timeout  time.Duration
 }
 
-func PollSSHReachable(ctx context.Context, runner remote.Runner, host string, cfg ReachabilityConfig, logger *slog.Logger) error {
+const sshProbeStepName = "ssh_probe"
+
+func PollSSHReachable(ctx context.Context, runner remote.Runner, host, executionID string, cfg ReachabilityConfig, logger *slog.Logger) error {
 	logger = trace.OrDefault(logger)
 	logger.Info(trace.EventWaitEntered, "component", "reachability", "host", host, "wait_for", "ssh_reachability")
 
@@ -32,9 +34,11 @@ func PollSSHReachable(ctx context.Context, runner remote.Runner, host string, cf
 		case <-ticker.C:
 			attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			_, err := runner.Execute(attemptCtx, remote.CommandRequest{
-				Host:    host,
-				Command: "hostname",
-				Timeout: 5 * time.Second,
+				Host:        host,
+				Command:     "hostname",
+				ExecutionID: executionID,
+				StepName:    sshProbeStepName,
+				Timeout:     5 * time.Second,
 			})
 			cancel()
 			if err == nil {

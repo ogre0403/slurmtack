@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"reflect"
 	"testing"
 
@@ -9,7 +10,7 @@ import (
 )
 
 func TestBuildSSHRunnerDisabledWithoutSSHConfig(t *testing.T) {
-	if got := buildSSHRunner(&config.Config{}); got != nil {
+	if got := buildSSHRunner(&config.Config{}, slog.Default()); got != nil {
 		t.Fatalf("buildSSHRunner() = %#v, want nil", got)
 	}
 }
@@ -38,7 +39,7 @@ func TestBuildSSHExecutorConfig(t *testing.T) {
 func TestBuildSSHRunnerEnabledWithSSHConfig(t *testing.T) {
 	cfg := &config.Config{SSHPrivateKeyPath: "/run/secrets/node-key"}
 
-	if got := buildSSHRunner(cfg); got == nil {
+	if got := buildSSHRunner(cfg, slog.Default()); got == nil {
 		t.Fatal("buildSSHRunner() = nil, want configured runner")
 	}
 }

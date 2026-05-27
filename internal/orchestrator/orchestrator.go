@@ -406,7 +406,7 @@ func (o *Orchestrator) doReboot(ctx context.Context, exec *domain.Execution) err
 
 func (o *Orchestrator) doSSHPoll(ctx context.Context, exec *domain.Execution) error {
 	execLog := trace.ForExecution(o.logger, exec)
-	err := PollSSHReachable(ctx, o.sshRunner, exec.NodeName, ReachabilityConfig{
+	err := PollSSHReachable(ctx, o.sshRunner, exec.NodeName, exec.ID, ReachabilityConfig{
 		Interval: o.cfg.SSHPollInterval,
 		Timeout:  o.cfg.SSHPollTimeout,
 	}, o.logger)
