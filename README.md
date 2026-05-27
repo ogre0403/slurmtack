@@ -29,6 +29,8 @@ set +a
 go run ./cmd
 ```
 
+若你要啟用 reboot 後的 SSH reachability，請另外取消註解 `SSH_USER` / `SSH_PORT` / `SSH_OPTIONS`，並設定 `SSH_PRIVATE_KEY_PATH` 指向 daemon 所在主機上可讀的私鑰檔案。只要任一 SSH runner 變數被設定，`SSH_PRIVATE_KEY_PATH` 就會變成必填。
+
 啟動後，服務會監聽 `http://127.0.0.1:8080`。
 
 ### 方式二: Docker Compose
@@ -40,6 +42,8 @@ cp .env.example docker/.env
 # 將 docker/.env 內的 DB_PATH 改成 /data/slurmtack.db
 make up
 ```
+
+如果 daemon 跑在容器內且要啟用 SSH runner，`SSH_PRIVATE_KEY_PATH` 必須填容器內路徑，並且那個路徑要對應到已掛載進容器的可讀私鑰檔。
 
 預設會:
 
@@ -119,9 +123,15 @@ curl http://127.0.0.1:8080/v1/switches \
 - `OS_PROJECT_NAME`
 - `OS_USERNAME`
 - `OS_PASSWORD`
+- `SSH_USER`
+- `SSH_PORT`
+- `SSH_OPTIONS`
+- `SSH_PRIVATE_KEY_PATH` — 只要設定任一 SSH runner 參數，這個值就必填，而且必須是 daemon 目前執行環境中可讀的私鑰路徑
 - `SSH_POLL_INTERVAL`
 - `SSH_POLL_TIMEOUT`
 - `PLACEHOLDER_SIF_PATH`
+
+若 `SSH_PRIVATE_KEY_PATH` 缺少、路徑不存在，或 daemon 無法讀取該檔案，程式會在 startup 階段直接退出，並回報明確的 `SSH_PRIVATE_KEY_PATH` 驗證錯誤，而不是等到 workflow 跑到 reboot/ssh poll 時才失敗。
 
 ## RabbitMQ + placeholder agent: Slurm-to-OpenStack 流程
 

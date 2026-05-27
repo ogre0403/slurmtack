@@ -29,6 +29,7 @@ type Config struct {
 	SSHUser             string
 	SSHPort             string
 	SSHOptions          string
+	SSHPrivateKeyPath   string
 }
 
 func Load() (*Config, error) {
@@ -52,6 +53,7 @@ func Load() (*Config, error) {
 		SSHUser:             os.Getenv("SSH_USER"),
 		SSHPort:             os.Getenv("SSH_PORT"),
 		SSHOptions:          os.Getenv("SSH_OPTIONS"),
+		SSHPrivateKeyPath:   os.Getenv("SSH_PRIVATE_KEY_PATH"),
 	}
 
 	cfg.SSHPollInterval = parseDuration(os.Getenv("SSH_POLL_INTERVAL"), 10*time.Second)
@@ -105,5 +107,21 @@ func (c *Config) validate() error {
 	if c.APIToken == "" {
 		return fmt.Errorf("required environment variable API_TOKEN is not set")
 	}
+	if c.SSHRunnerEnabled() {
+		if c.SSHPrivateKeyPath == "" {
+			return fmt.Errorf("SSH_PRIVATE_KEY_PATH is required when SSH runner configuration is enabled")
+		}
+		file, err := os.Open(c.SSHPrivateKeyPath)
+		if err != nil {
+			return fmt.Errorf("SSH_PRIVATE_KEY_PATH must point to a readable file: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("SSH_PRIVATE_KEY_PATH must point to a readable file: %w", err)
+		}
+	}
 	return nil
+}
+
+func (c *Config) SSHRunnerEnabled() bool {
+	return c.SSHUser != "" || c.SSHPort != "" || c.SSHOptions != "" || c.SSHPrivateKeyPath != ""
 }

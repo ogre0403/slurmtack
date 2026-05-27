@@ -10,9 +10,10 @@ import (
 )
 
 type SSHExecutorConfig struct {
-	User    string
-	Port    string
-	Options []string
+	User         string
+	Port         string
+	Options      []string
+	IdentityFile string
 }
 
 type ExecSSHExecutor struct {
@@ -31,9 +32,35 @@ func (e *ExecSSHExecutor) Run(ctx context.Context, host string, command string, 
 		defer cancel()
 	}
 
+	cmd := exec.CommandContext(runCtx, "ssh", e.buildSSHArgs(host, command, args)...)
+	var stdoutBuf bytes.Buffer
+	var stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err = cmd.Run()
+	stdout = stdoutBuf.String()
+	stderr = stderrBuf.String()
+
+	if err == nil {
+		return stdout, stderr, 0, nil
+	}
+
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return stdout, stderr, exitErr.ExitCode(), nil
+	}
+
+	return stdout, stderr, -1, fmt.Errorf("ssh command failed: %w", err)
+}
+
+func (e *ExecSSHExecutor) buildSSHArgs(host string, command string, args []string) []string {
+
 	sshArgs := []string{"-o", "BatchMode=yes"}
 	if e.config.Port != "" {
 		sshArgs = append(sshArgs, "-p", e.config.Port)
+	}
+	if e.config.IdentityFile != "" {
+		sshArgs = append(sshArgs, "-i", e.config.IdentityFile)
 	}
 	for _, opt := range e.config.Options {
 		if opt == "" {
@@ -54,25 +81,7 @@ func (e *ExecSSHExecutor) Run(ctx context.Context, host string, command string, 
 
 	sshArgs = append(sshArgs, target, remoteCommand)
 
-	cmd := exec.CommandContext(runCtx, "ssh", sshArgs...)
-	var stdoutBuf bytes.Buffer
-	var stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
-
-	err = cmd.Run()
-	stdout = stdoutBuf.String()
-	stderr = stderrBuf.String()
-
-	if err == nil {
-		return stdout, stderr, 0, nil
-	}
-
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		return stdout, stderr, exitErr.ExitCode(), nil
-	}
-
-	return stdout, stderr, -1, fmt.Errorf("ssh command failed: %w", err)
+	return sshArgs
 }
 
 func shellQuoteArgs(args []string) string {

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/slurmtack/slurmtack/internal/mq"
 	"github.com/slurmtack/slurmtack/internal/openstack"
 	"github.com/slurmtack/slurmtack/internal/orchestrator"
+	"github.com/slurmtack/slurmtack/internal/remote"
 	"github.com/slurmtack/slurmtack/internal/service"
 	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
@@ -73,7 +75,8 @@ func main() {
 
 	// Start orchestrator
 	runner := engine.NewRunner(sqlStore, baseLogger)
-	orch := orchestrator.New(sqlStore, runner, nil, slurmClient, osClient, orchestrator.Config{
+	sshRunner := buildSSHRunner(cfg)
+	orch := orchestrator.New(sqlStore, runner, sshRunner, slurmClient, osClient, orchestrator.Config{
 		TickInterval:    2 * time.Second,
 		SSHPollInterval: cfg.SSHPollInterval,
 		SSHPollTimeout:  cfg.SSHPollTimeout,
@@ -144,5 +147,23 @@ func main() {
 	case <-done:
 	case <-time.After(30 * time.Second):
 		log.Println("shutdown timed out waiting for goroutines")
+	}
+}
+
+func buildSSHRunner(cfg *config.Config) remote.Runner {
+	if cfg == nil || !cfg.SSHRunnerEnabled() {
+		return nil
+	}
+
+	executor := remote.NewExecSSHExecutor(buildSSHExecutorConfig(cfg))
+	return remote.NewSSHRunner(executor)
+}
+
+func buildSSHExecutorConfig(cfg *config.Config) remote.SSHExecutorConfig {
+	return remote.SSHExecutorConfig{
+		User:         cfg.SSHUser,
+		Port:         cfg.SSHPort,
+		Options:      strings.Fields(cfg.SSHOptions),
+		IdentityFile: cfg.SSHPrivateKeyPath,
 	}
 }
