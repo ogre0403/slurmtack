@@ -47,6 +47,8 @@ func NewGophecloudClient(ctx context.Context, opts AuthOpts) (Client, error) {
 		return nil, fmt.Errorf("creating compute client: %w", err)
 	}
 
+	compute.Microversion = "2.53"
+
 	return &gophecloudClient{compute: compute}, nil
 }
 
