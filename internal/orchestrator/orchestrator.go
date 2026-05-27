@@ -85,6 +85,8 @@ func actionName(a action) string {
 		return "acquire_lease_and_precheck"
 	case actionQuiesce:
 		return "quiesce"
+	case actionVerifySourceQuiesce:
+		return "verify_source_quiesce"
 	case actionReconfigure:
 		return "reconfigure"
 	case actionReboot:
@@ -136,6 +138,7 @@ const (
 	actionPrecheck
 	actionAcquireLeaseAndPrecheck
 	actionQuiesce
+	actionVerifySourceQuiesce
 	actionReconfigure
 	actionReboot
 	actionSSHPoll
@@ -193,7 +196,7 @@ func (o *Orchestrator) determineO2S(exec *domain.Execution) action {
 	case domain.StatePrecheckPassed:
 		return actionQuiesce
 	case domain.StateSourceQuiescing:
-		return actionNone // waiting for drain verification
+		return actionVerifySourceQuiesce
 	case domain.StateSourceDetached:
 		return actionReconfigure
 	case domain.StateHostReconfiguring:
@@ -229,6 +232,8 @@ func (o *Orchestrator) executeAction(ctx context.Context, exec *domain.Execution
 		return o.doPrecheck(ctx, exec)
 	case actionQuiesce:
 		return o.doQuiesce(ctx, exec)
+	case actionVerifySourceQuiesce:
+		return o.doVerifySourceQuiesce(ctx, exec)
 	case actionReconfigure:
 		return o.doReconfigure(ctx, exec)
 	case actionReboot:
@@ -328,11 +333,49 @@ func (o *Orchestrator) doQuiesce(ctx context.Context, exec *domain.Execution) er
 		}
 		trace.ForExecution(o.logger, exec).Info(trace.EventWaitEntered,
 			"action", "quiesce",
-			"wait_for", "drained_event",
+			"wait_for", "openstack_source_quiesce",
 		)
 	}
 
 	return o.runner.Transition(ctx, exec.ID, domain.StateSourceQuiescing)
+}
+
+func (o *Orchestrator) doVerifySourceQuiesce(ctx context.Context, exec *domain.Execution) error {
+	if o.openstack == nil {
+		return errors.New("openstack client not configured")
+	}
+
+	computeService, err := o.openstack.GetComputeService(ctx, exec.NodeName)
+	if err != nil {
+		return err
+	}
+
+	instances, err := o.openstack.ListInstances(ctx, exec.NodeName)
+	if err != nil {
+		return err
+	}
+
+	activeMigrations, err := o.openstack.ListActiveMigrations(ctx, exec.NodeName)
+	if err != nil {
+		return err
+	}
+
+	if computeService.Enabled || len(instances) > 0 || len(activeMigrations) > 0 {
+		trace.ForExecution(o.logger, exec).Info(trace.EventWaitProgress,
+			"action", "verify_source_quiesce",
+			"wait_for", "openstack_source_quiesce",
+			"compute_service_enabled", computeService.Enabled,
+			"resident_instances", len(instances),
+			"active_migrations", len(activeMigrations),
+		)
+		return nil
+	}
+
+	trace.ForExecution(o.logger, exec).Info(trace.EventWaitSatisfied,
+		"action", "verify_source_quiesce",
+		"wait_for", "openstack_source_quiesce",
+	)
+	return o.runner.Transition(ctx, exec.ID, domain.StateSourceDetached)
 }
 
 func (o *Orchestrator) doReconfigure(ctx context.Context, exec *domain.Execution) error {

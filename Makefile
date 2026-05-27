@@ -5,7 +5,7 @@ up:
 	docker compose -f docker/docker-compose.yaml up --build -d
 
 down:
-	docker compose -f docker/docker-compose.yaml down
+	docker compose -f docker/docker-compose.yaml down -v
 
 build:
 	docker compose -f docker/docker-compose.yaml build
