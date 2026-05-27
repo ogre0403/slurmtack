@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"testing"
 	"time"
@@ -60,6 +61,40 @@ func TestCreateAndGetExecution(t *testing.T) {
 	}
 }
 
+func TestCreateAndGetExecutionWithRequestedSlurmPartition(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	exec := &domain.Execution{
+		ID:                       "exec-partition",
+		Direction:                domain.DirectionSlurmToOpenStack,
+		RequestedBy:              "operator",
+		RequestedAt:              time.Now().Truncate(time.Second),
+		CurrentState:             domain.StateRequested,
+		DesiredOwner:             domain.OwnerOpenStack,
+		PreviousOwner:            domain.OwnerSlurm,
+		StateVersion:             0,
+		OverallStatus:            domain.OverallStatusActive,
+		RequestedSlurmConstraint: "gpu-a100",
+		RequestedSlurmPartition:  "gpu-maint",
+	}
+
+	if err := s.CreateExecution(ctx, exec); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetExecution(ctx, exec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RequestedSlurmConstraint != "gpu-a100" {
+		t.Fatalf("RequestedSlurmConstraint = %q, want gpu-a100", got.RequestedSlurmConstraint)
+	}
+	if got.RequestedSlurmPartition != "gpu-maint" {
+		t.Fatalf("RequestedSlurmPartition = %q, want gpu-maint", got.RequestedSlurmPartition)
+	}
+}
+
 func TestGetExecutionNotFound(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.GetExecution(context.Background(), "nonexistent")
@@ -75,7 +110,7 @@ func TestListExecutions(t *testing.T) {
 
 	for _, name := range []string{"gpu-01", "gpu-02", "gpu-01"} {
 		exec := &domain.Execution{
-			ID: "exec-" + name + "-" + time.Now().Format("150405.000"),
+			ID:       "exec-" + name + "-" + time.Now().Format("150405.000"),
 			NodeName: name, Direction: domain.DirectionSlurmToOpenStack,
 			RequestedBy: "op", RequestedAt: now, CurrentState: domain.StateRequested,
 			DesiredOwner: domain.OwnerOpenStack, PreviousOwner: domain.OwnerSlurm,
@@ -165,13 +200,95 @@ func TestUpdateExecution(t *testing.T) {
 
 	exec.NodeName = "gpu-05"
 	exec.PlaceholderJobID = "job-123"
+	exec.RequestedSlurmPartition = "gpu-maint"
 	if err := s.UpdateExecution(ctx, exec); err != nil {
 		t.Fatal(err)
 	}
 
 	got, _ := s.GetExecution(ctx, "exec-upd")
-	if got.NodeName != "gpu-05" || got.PlaceholderJobID != "job-123" {
+	if got.NodeName != "gpu-05" || got.PlaceholderJobID != "job-123" || got.RequestedSlurmPartition != "gpu-maint" {
 		t.Fatalf("update not persisted: %+v", got)
+	}
+}
+
+func TestNewSQLiteStoreMigratesRequestedSlurmPartitionColumn(t *testing.T) {
+	f, err := os.CreateTemp("", "slurmtack-legacy-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	t.Cleanup(func() { os.Remove(f.Name()) })
+
+	legacyDB, err := sql.Open("sqlite3", f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacySchema := `CREATE TABLE IF NOT EXISTS executions (
+		id TEXT PRIMARY KEY,
+		node_name TEXT NOT NULL DEFAULT '',
+		direction TEXT NOT NULL,
+		requested_by TEXT NOT NULL,
+		requested_at DATETIME NOT NULL,
+		current_state TEXT NOT NULL,
+		desired_owner TEXT NOT NULL,
+		previous_owner TEXT NOT NULL,
+		state_version INTEGER NOT NULL DEFAULT 0,
+		overall_status TEXT NOT NULL DEFAULT 'active',
+		lock_acquired_at DATETIME,
+		lock_released_at DATETIME,
+		final_error_code TEXT NOT NULL DEFAULT '',
+		final_error_summary TEXT NOT NULL DEFAULT '',
+		log_root TEXT NOT NULL DEFAULT '',
+		placeholder_job_id TEXT NOT NULL DEFAULT '',
+		requested_slurm_constraint TEXT NOT NULL DEFAULT '',
+		allocation_event_at DATETIME
+	)`
+	if _, err := legacyDB.Exec(legacySchema); err != nil {
+		legacyDB.Close()
+		t.Fatal(err)
+	}
+	now := time.Now().Truncate(time.Second)
+	if _, err := legacyDB.Exec(`INSERT INTO executions (
+		id, node_name, direction, requested_by, requested_at,
+		current_state, desired_owner, previous_owner, state_version,
+		overall_status, placeholder_job_id, requested_slurm_constraint
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"legacy-exec", "gpu-01", string(domain.DirectionSlurmToOpenStack), "operator", now,
+		string(domain.StateRequested), string(domain.OwnerOpenStack), string(domain.OwnerSlurm), 0,
+		string(domain.OverallStatusActive), "job-legacy", "gpu-a100",
+	); err != nil {
+		legacyDB.Close()
+		t.Fatal(err)
+	}
+	if err := legacyDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := NewSQLiteStore(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	got, err := s.GetExecution(context.Background(), "legacy-exec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RequestedSlurmPartition != "" {
+		t.Fatalf("RequestedSlurmPartition = %q, want empty string after migration", got.RequestedSlurmPartition)
+	}
+
+	got.RequestedSlurmPartition = "gpu-maint"
+	if err := s.UpdateExecution(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := s.GetExecution(context.Background(), "legacy-exec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.RequestedSlurmPartition != "gpu-maint" {
+		t.Fatalf("RequestedSlurmPartition = %q, want gpu-maint", updated.RequestedSlurmPartition)
 	}
 }
 

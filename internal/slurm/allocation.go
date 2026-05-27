@@ -40,6 +40,7 @@ func (h *AllocationHandler) SubmitPlaceholder(ctx context.Context, executionID s
 	result, err := h.client.SubmitPlaceholderJob(ctx, PlaceholderJobRequest{
 		ExecutionID: executionID,
 		Constraint:  exec.RequestedSlurmConstraint,
+		Partition:   exec.RequestedSlurmPartition,
 	})
 	if err != nil {
 		return fmt.Errorf("submitting placeholder job: %w", err)

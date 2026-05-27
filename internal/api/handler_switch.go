@@ -36,6 +36,7 @@ func (h *SwitchHandler) Create(c *gin.Context) {
 		Direction:       dir,
 		RequestedBy:     req.RequestedBy,
 		SlurmConstraint: req.SlurmConstraint,
+		SlurmPartition:  req.SlurmPartition,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})

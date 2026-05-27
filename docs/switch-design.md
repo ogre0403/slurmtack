@@ -241,7 +241,8 @@ Required fields:
 15. `log_root`
 16. `placeholder_job_id`
 17. `requested_slurm_constraint`
-18. `allocation_event_received_at`
+18. `requested_slurm_partition`
+19. `allocation_event_received_at`
 
 For Slurm-to-OpenStack, `node_name` may be empty while the execution is in `requested` or `awaiting_source_allocation`.
 

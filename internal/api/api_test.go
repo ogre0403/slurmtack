@@ -92,6 +92,27 @@ func TestCreateSwitch(t *testing.T) {
 	}
 }
 
+func TestCreateSwitchWithSlurmPartition(t *testing.T) {
+	srv := setupTestServer(t)
+
+	body := `{"direction":"slurm_to_openstack","requested_by":"operator-1","slurm_constraint":"gpu-a100","slurm_partition":"gpu-maint"}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp SwitchResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.ExecutionID == "" {
+		t.Fatal("expected non-empty execution_id")
+	}
+}
+
 func TestCreateSwitchInvalidDirection(t *testing.T) {
 	srv := setupTestServer(t)
 

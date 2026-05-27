@@ -27,6 +27,10 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := ensureExecutionColumns(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &SQLiteStore{db: db}, nil
 }
 
@@ -44,13 +48,13 @@ func (s *SQLiteStore) CreateExecution(_ context.Context, exec *domain.Execution)
 		current_state, desired_owner, previous_owner, state_version,
 		overall_status, lock_acquired_at, lock_released_at,
 		final_error_code, final_error_summary, log_root,
-		placeholder_job_id, requested_slurm_constraint, allocation_event_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		placeholder_job_id, requested_slurm_constraint, requested_slurm_partition, allocation_event_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		exec.ID, exec.NodeName, string(exec.Direction), exec.RequestedBy, exec.RequestedAt,
 		string(exec.CurrentState), string(exec.DesiredOwner), string(exec.PreviousOwner), exec.StateVersion,
 		string(exec.OverallStatus), nullTime(exec.LockAcquiredAt), nullTime(exec.LockReleasedAt),
 		exec.FinalErrorCode, exec.FinalErrorSummary, exec.LogRoot,
-		exec.PlaceholderJobID, exec.RequestedSlurmConstraint, nullTime(exec.AllocationEventAt),
+		exec.PlaceholderJobID, exec.RequestedSlurmConstraint, exec.RequestedSlurmPartition, nullTime(exec.AllocationEventAt),
 	)
 	return err
 }
@@ -61,7 +65,7 @@ func (s *SQLiteStore) GetExecution(_ context.Context, id string) (*domain.Execut
 		current_state, desired_owner, previous_owner, state_version,
 		overall_status, lock_acquired_at, lock_released_at,
 		final_error_code, final_error_summary, log_root,
-		placeholder_job_id, requested_slurm_constraint, allocation_event_at
+		placeholder_job_id, requested_slurm_constraint, requested_slurm_partition, allocation_event_at
 	FROM executions WHERE id = ?`, id)
 	return scanExecution(row)
 }
@@ -75,7 +79,7 @@ func (s *SQLiteStore) ListExecutions(_ context.Context, nodeName string) ([]*dom
 			current_state, desired_owner, previous_owner, state_version,
 			overall_status, lock_acquired_at, lock_released_at,
 			final_error_code, final_error_summary, log_root,
-			placeholder_job_id, requested_slurm_constraint, allocation_event_at
+			placeholder_job_id, requested_slurm_constraint, requested_slurm_partition, allocation_event_at
 		FROM executions`)
 	} else {
 		rows, err = s.db.Query(`SELECT
@@ -83,7 +87,7 @@ func (s *SQLiteStore) ListExecutions(_ context.Context, nodeName string) ([]*dom
 			current_state, desired_owner, previous_owner, state_version,
 			overall_status, lock_acquired_at, lock_released_at,
 			final_error_code, final_error_summary, log_root,
-			placeholder_job_id, requested_slurm_constraint, allocation_event_at
+			placeholder_job_id, requested_slurm_constraint, requested_slurm_partition, allocation_event_at
 		FROM executions WHERE node_name = ?`, nodeName)
 	}
 	if err != nil {
@@ -108,7 +112,7 @@ func (s *SQLiteStore) ListActiveExecutions(_ context.Context) ([]*domain.Executi
 		current_state, desired_owner, previous_owner, state_version,
 		overall_status, lock_acquired_at, lock_released_at,
 		final_error_code, final_error_summary, log_root,
-		placeholder_job_id, requested_slurm_constraint, allocation_event_at
+		placeholder_job_id, requested_slurm_constraint, requested_slurm_partition, allocation_event_at
 	FROM executions WHERE overall_status = ?`, string(domain.OverallStatusActive))
 	if err != nil {
 		return nil, err
@@ -132,13 +136,13 @@ func (s *SQLiteStore) UpdateExecution(_ context.Context, exec *domain.Execution)
 		current_state = ?, desired_owner = ?, previous_owner = ?, state_version = ?,
 		overall_status = ?, lock_acquired_at = ?, lock_released_at = ?,
 		final_error_code = ?, final_error_summary = ?, log_root = ?,
-		placeholder_job_id = ?, requested_slurm_constraint = ?, allocation_event_at = ?
+		placeholder_job_id = ?, requested_slurm_constraint = ?, requested_slurm_partition = ?, allocation_event_at = ?
 	WHERE id = ?`,
 		exec.NodeName, string(exec.Direction), exec.RequestedBy, exec.RequestedAt,
 		string(exec.CurrentState), string(exec.DesiredOwner), string(exec.PreviousOwner), exec.StateVersion,
 		string(exec.OverallStatus), nullTime(exec.LockAcquiredAt), nullTime(exec.LockReleasedAt),
 		exec.FinalErrorCode, exec.FinalErrorSummary, exec.LogRoot,
-		exec.PlaceholderJobID, exec.RequestedSlurmConstraint, nullTime(exec.AllocationEventAt),
+		exec.PlaceholderJobID, exec.RequestedSlurmConstraint, exec.RequestedSlurmPartition, nullTime(exec.AllocationEventAt),
 		exec.ID,
 	)
 	if err != nil {
@@ -308,7 +312,7 @@ func scanExecution(row *sql.Row) (*domain.Execution, error) {
 		&exec.CurrentState, &exec.DesiredOwner, &exec.PreviousOwner, &exec.StateVersion,
 		&exec.OverallStatus, &lockAcquired, &lockReleased,
 		&exec.FinalErrorCode, &exec.FinalErrorSummary, &exec.LogRoot,
-		&exec.PlaceholderJobID, &exec.RequestedSlurmConstraint, &allocEvent,
+		&exec.PlaceholderJobID, &exec.RequestedSlurmConstraint, &exec.RequestedSlurmPartition, &allocEvent,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
@@ -336,7 +340,7 @@ func scanExecutionRows(rows *sql.Rows) (*domain.Execution, error) {
 		&exec.CurrentState, &exec.DesiredOwner, &exec.PreviousOwner, &exec.StateVersion,
 		&exec.OverallStatus, &lockAcquired, &lockReleased,
 		&exec.FinalErrorCode, &exec.FinalErrorSummary, &exec.LogRoot,
-		&exec.PlaceholderJobID, &exec.RequestedSlurmConstraint, &allocEvent,
+		&exec.PlaceholderJobID, &exec.RequestedSlurmConstraint, &exec.RequestedSlurmPartition, &allocEvent,
 	)
 	if err != nil {
 		return nil, err
@@ -358,6 +362,39 @@ func nullTime(t *time.Time) sql.NullTime {
 		return sql.NullTime{}
 	}
 	return sql.NullTime{Time: *t, Valid: true}
+}
+
+func ensureExecutionColumns(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(executions)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasRequestedSlurmPartition := false
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == "requested_slurm_partition" {
+			hasRequestedSlurmPartition = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if hasRequestedSlurmPartition {
+		return nil
+	}
+
+	_, err = db.Exec(`ALTER TABLE executions ADD COLUMN requested_slurm_partition TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
 func nullInt(v *int) sql.NullInt64 {

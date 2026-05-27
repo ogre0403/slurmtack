@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS executions (
     log_root TEXT NOT NULL DEFAULT '',
     placeholder_job_id TEXT NOT NULL DEFAULT '',
     requested_slurm_constraint TEXT NOT NULL DEFAULT '',
+    requested_slurm_partition TEXT NOT NULL DEFAULT '',
     allocation_event_at DATETIME
 );
 

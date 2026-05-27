@@ -7,6 +7,7 @@ type SwitchRequest struct {
 	RequestedBy     string `json:"requested_by" binding:"required"`
 	NodeName        string `json:"node_name"`
 	SlurmConstraint string `json:"slurm_constraint"`
+	SlurmPartition  string `json:"slurm_partition"`
 }
 
 type SwitchResponse struct {
@@ -15,15 +16,15 @@ type SwitchResponse struct {
 }
 
 type ExecutionStatus struct {
-	ID            string     `json:"id"`
-	NodeName      string     `json:"node_name"`
-	Direction     string     `json:"direction"`
-	CurrentState  string     `json:"current_state"`
-	OverallStatus string     `json:"overall_status"`
-	RequestedAt   time.Time  `json:"requested_at"`
-	RequestedBy   string     `json:"requested_by"`
-	ErrorCode     string     `json:"error_code,omitempty"`
-	ErrorSummary  string     `json:"error_summary,omitempty"`
+	ID            string    `json:"id"`
+	NodeName      string    `json:"node_name"`
+	Direction     string    `json:"direction"`
+	CurrentState  string    `json:"current_state"`
+	OverallStatus string    `json:"overall_status"`
+	RequestedAt   time.Time `json:"requested_at"`
+	RequestedBy   string    `json:"requested_by"`
+	ErrorCode     string    `json:"error_code,omitempty"`
+	ErrorSummary  string    `json:"error_summary,omitempty"`
 }
 
 type ErrorResponse struct {

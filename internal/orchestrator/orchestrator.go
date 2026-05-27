@@ -257,6 +257,7 @@ func (o *Orchestrator) doSubmitPlaceholder(ctx context.Context, exec *domain.Exe
 	result, err := o.slurm.SubmitPlaceholderJob(ctx, slurm.PlaceholderJobRequest{
 		ExecutionID: exec.ID,
 		Constraint:  exec.RequestedSlurmConstraint,
+		Partition:   exec.RequestedSlurmPartition,
 	})
 	if err != nil {
 		return err

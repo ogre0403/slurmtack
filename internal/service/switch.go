@@ -18,6 +18,7 @@ type SwitchRequest struct {
 	Direction       domain.SwitchDirection
 	RequestedBy     string
 	SlurmConstraint string
+	SlurmPartition  string
 }
 
 type SwitchService struct {
@@ -60,6 +61,7 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 		StateVersion:             0,
 		OverallStatus:            domain.OverallStatusActive,
 		RequestedSlurmConstraint: req.SlurmConstraint,
+		RequestedSlurmPartition:  req.SlurmPartition,
 	}
 
 	if err := s.store.CreateExecution(ctx, exec); err != nil {

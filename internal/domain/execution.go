@@ -20,5 +20,6 @@ type Execution struct {
 	LogRoot                  string
 	PlaceholderJobID         string
 	RequestedSlurmConstraint string
+	RequestedSlurmPartition  string
 	AllocationEventAt        *time.Time
 }

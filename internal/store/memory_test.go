@@ -100,3 +100,31 @@ func TestAdvanceStateRejectsInvalidTransition(t *testing.T) {
 		t.Fatalf("invalid transition should be rejected, got: %v", err)
 	}
 }
+
+func TestExecutionRoundTripsRequestedSlurmPartition(t *testing.T) {
+	s := NewMemoryStore()
+	ctx := context.Background()
+
+	exec := &domain.Execution{
+		ID:                      "exec-partition",
+		Direction:               domain.DirectionSlurmToOpenStack,
+		RequestedBy:             "operator",
+		RequestedAt:             time.Now(),
+		CurrentState:            domain.StateRequested,
+		DesiredOwner:            domain.OwnerOpenStack,
+		PreviousOwner:           domain.OwnerSlurm,
+		OverallStatus:           domain.OverallStatusActive,
+		RequestedSlurmPartition: "gpu-maint",
+	}
+	if err := s.CreateExecution(ctx, exec); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetExecution(ctx, exec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RequestedSlurmPartition != "gpu-maint" {
+		t.Fatalf("RequestedSlurmPartition = %q, want gpu-maint", got.RequestedSlurmPartition)
+	}
+}

@@ -35,13 +35,15 @@ go run ./cmd
 
 ### 方式二: Docker Compose
 
-Compose 仍使用 `docker/.env`，最簡單的方式是從新的根目錄範本複製一份，再把 `DB_PATH` 改成容器掛載路徑。
+Compose 使用 `docker/.env`，建議直接從 compose 專用範本開始。
 
 ```bash
-cp .env.example docker/.env
-# 將 docker/.env 內的 DB_PATH 改成 /data/slurmtack.db
+cp docker/.env.example docker/.env
+# 視環境調整 docker/.env
 make up
 ```
+
+`docker/.env.example` 已經預先把 `DB_PATH` 設成 `/data/slurmtack.db`，而且 `PLACEHOLDER_SIF_PATH` 的建議值也對應 `docker-compose` 內建的 `/data/placeholder-agent.sif` 掛載點。
 
 如果 daemon 跑在容器內且要啟用 SSH runner，`SSH_PRIVATE_KEY_PATH` 必須填容器內路徑，並且那個路徑要對應到已掛載進容器的可讀私鑰檔。
 
@@ -111,7 +113,7 @@ curl http://127.0.0.1:8080/v1/switches \
 
 ## 可選環境變數
 
-本地或 staging 啟動時，優先使用 [/.env.example](/workspaces/slurmtack/.env.example)。如果只想知道有哪些整合入口，目前程式會讀取這些設定:
+本地啟動建議使用 [/.env.example](/workspaces/slurmtack/.env.example)，docker-compose 則建議使用 [/docker/.env.example](/workspaces/slurmtack/docker/.env.example)。如果只想知道有哪些整合入口，目前程式會讀取這些設定:
 
 - `AMQP_URL`
 - `SLURM_API_URL`
@@ -166,16 +168,18 @@ cp build/output/placeholder-agent.sif /shared/images/placeholder-agent.sif
 
 ### 2. 啟動 daemon，並打開 MQ / Slurm / OpenStack 整合設定
 
-建議直接從 [/.env.example](/workspaces/slurmtack/.env.example) 複製，再按你的 staging 環境覆蓋值:
+如果你是本地直接 `go run ./cmd`，建議從 [/.env.example](/workspaces/slurmtack/.env.example) 複製；如果你是用 docker-compose，建議從 [/docker/.env.example](/workspaces/slurmtack/docker/.env.example) 複製。
 
 ```bash
-cp .env.example .env
-# 視你的環境修改 .env
+cp docker/.env.example docker/.env
+# 視你的環境修改 docker/.env
 
 set -a
-. ./.env
+. ./docker/.env
 set +a
 ```
+
+如果你不是用 docker-compose，而是直接在主機上跑 daemon，則把上面的路徑改成 repo 根目錄的 `.env.example` / `.env` 即可。
 
 然後啟動 RabbitMQ 與 daemon:
 
@@ -191,7 +195,7 @@ make up
 
 ### 3. 建立 `slurm_to_openstack` execution
 
-這種方向在 request 建立時通常還不知道實際會切哪一台節點，所以用 `slurm_constraint` 讓 Slurm 選一台符合條件的 GPU node。
+這種方向在 request 建立時通常還不知道實際會切哪一台節點，所以可以用 `slurm_constraint` 讓 Slurm 選一台符合條件的 GPU node；如果叢集有多個 partition，也可以額外帶 `slurm_partition`，把 placeholder job 限制到指定 partition。
 
 ```bash
 curl -X POST http://127.0.0.1:8080/v1/switches \
@@ -200,9 +204,12 @@ curl -X POST http://127.0.0.1:8080/v1/switches \
 	-d '{
 		"direction": "slurm_to_openstack",
 		"requested_by": "staging-operator",
-		"slurm_constraint": "gpu-a100"
+		"slurm_constraint": "gpu-a100",
+		"slurm_partition": "gpu-maint"
 	}'
 ```
+
+`slurm_partition` 是可選欄位；若省略，daemon 會維持目前行為，讓 Slurm 使用預設 partition 選擇。
 
 建立後的預期狀態序列如下:
 
@@ -219,10 +226,13 @@ sbatch \
 	--job-name=gpu-switch-<execution_id> \
 	--nodes=1 \
 	--exclusive \
+	--partition=<slurm_partition> \
 	--constraint=<slurm_constraint> \
 	--export=EXECUTION_ID=<execution_id>,AMQP_URL=<amqp_url>,SLURM_API_URL=<slurm_api_url>,SLURM_JWT_TOKEN=<slurm_jwt_token> \
 	--wrap="singularity run /shared/images/placeholder-agent.sif"
 ```
+
+如果 request 沒有提供 `slurm_partition`，上面的 `--partition=<slurm_partition>` 這行就不會出現在實際送出的 job script 裡。
 
 當 job 真正落到某台 GPU node 後，placeholder agent 會:
 
