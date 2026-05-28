@@ -446,3 +446,48 @@ func TestDoSSHPollFailsWhenHostDoesNotReturnAfterGoingDown(t *testing.T) {
 		}
 	}
 }
+
+func TestDoSSHPollTreatsNonZeroProbeExitAsUnreachable(t *testing.T) {
+	logger, captured := newCaptureLogger()
+	sshRunner := &scriptedSSHRunner{
+		t: t,
+		responses: []scriptedSSHResponse{{
+			result: &remote.CommandResult{ExitCode: 255, Stderr: "Connection refused"},
+		}, {
+			result: &remote.CommandResult{ExitCode: 0},
+		}},
+	}
+	orch, s, exec := newSSHOrchestrator(t, sshRunner, logger)
+	exec.CurrentState = domain.StateRebooting
+	if err := s.UpdateExecution(context.Background(), exec); err != nil {
+		t.Fatalf("update execution: %v", err)
+	}
+
+	if err := orch.doSSHPoll(context.Background(), exec); err != nil {
+		t.Fatalf("doSSHPoll() error = %v", err)
+	}
+
+	updated, err := s.GetExecution(context.Background(), exec.ID)
+	if err != nil {
+		t.Fatalf("get execution: %v", err)
+	}
+	if updated.CurrentState != domain.StateHostReachable {
+		t.Fatalf("execution state = %s, want %s", updated.CurrentState, domain.StateHostReachable)
+	}
+
+	progressLogs := captured.findAll("wait.progress")
+	if len(progressLogs) == 0 {
+		t.Fatal("expected wait.progress log, got none")
+	}
+	if progressLogs[0].Attrs["probe_result"] != "reboot_progress_observed" {
+		t.Fatalf("first wait.progress probe_result = %q, want %q", progressLogs[0].Attrs["probe_result"], "reboot_progress_observed")
+	}
+
+	satisfied := captured.find("wait.satisfied")
+	if satisfied == nil {
+		t.Fatal("expected wait.satisfied log, got none")
+	}
+	if satisfied.Attrs["probe_result"] != "post_reboot_recovery" {
+		t.Fatalf("wait.satisfied probe_result = %q, want %q", satisfied.Attrs["probe_result"], "post_reboot_recovery")
+	}
+}

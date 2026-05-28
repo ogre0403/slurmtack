@@ -2,7 +2,9 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/slurmtack/slurmtack/internal/remote"
@@ -34,7 +36,7 @@ func PollSSHReachable(ctx context.Context, runner remote.Runner, host, execution
 			return ErrSSHPollTimeout
 		case <-ticker.C:
 			attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			_, err := runner.Execute(attemptCtx, remote.CommandRequest{
+			result, err := runner.Execute(attemptCtx, remote.CommandRequest{
 				Host:        host,
 				Command:     "hostname",
 				ExecutionID: executionID,
@@ -42,6 +44,7 @@ func PollSSHReachable(ctx context.Context, runner remote.Runner, host, execution
 				Timeout:     5 * time.Second,
 			})
 			cancel()
+			err = classifyProbeResult(result, err)
 			if err == nil {
 				if !rebootObserved {
 					logger.Debug(trace.EventWaitProgress,
@@ -80,4 +83,22 @@ func PollSSHReachable(ctx context.Context, runner remote.Runner, host, execution
 			)
 		}
 	}
+}
+
+func classifyProbeResult(result *remote.CommandResult, err error) error {
+	if err != nil {
+		return err
+	}
+	if result == nil || result.ExitCode == 0 {
+		return nil
+	}
+
+	message := strings.TrimSpace(result.Stderr)
+	if message == "" {
+		message = strings.TrimSpace(result.Stdout)
+	}
+	if message == "" {
+		return fmt.Errorf("ssh probe exited with code %d", result.ExitCode)
+	}
+	return fmt.Errorf("ssh probe exited with code %d: %s", result.ExitCode, message)
 }
