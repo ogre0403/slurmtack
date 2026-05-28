@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -21,6 +23,50 @@ import (
 	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
 )
+
+type mqConnection interface {
+	Connect(context.Context) error
+	Reconnect(context.Context) error
+	Close() error
+}
+
+type mqConsumer interface {
+	Run(context.Context) error
+}
+
+type mqStartupDeps struct {
+	newConnection   func(string, *slog.Logger) mqConnection
+	declareTopology func(mqConnection) error
+	newConsumer     func(mqConnection, store.Store, *slog.Logger) mqConsumer
+}
+
+var defaultMQStartupDeps = mqStartupDeps{
+	newConnection: func(url string, logger *slog.Logger) mqConnection {
+		return mq.NewConnection(url, logger)
+	},
+	declareTopology: func(conn mqConnection) error {
+		amqpConn, ok := conn.(*mq.Connection)
+		if !ok {
+			return fmt.Errorf("unexpected mq connection type %T", conn)
+		}
+		return mq.DeclareTopology(amqpConn)
+	},
+	newConsumer: func(conn mqConnection, s store.Store, logger *slog.Logger) mqConsumer {
+		amqpConn, ok := conn.(*mq.Connection)
+		if !ok {
+			return mqErrorConsumer{err: fmt.Errorf("unexpected mq connection type %T", conn)}
+		}
+		return mq.NewConsumer(amqpConn, s, logger)
+	},
+}
+
+type mqErrorConsumer struct {
+	err error
+}
+
+func (c mqErrorConsumer) Run(context.Context) error {
+	return c.err
+}
 
 func main() {
 	baseLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -90,29 +136,8 @@ func main() {
 		baseLogger.Info("orchestrator.stopped")
 	}()
 
-	// Start MQ consumer if AMQP_URL is configured
-	var mqConn *mq.Connection
-	if cfg.AMQPURL != "" {
-		mqConn = mq.NewConnection(cfg.AMQPURL, baseLogger)
-		if err := mqConn.Connect(ctx); err != nil {
-			baseLogger.Warn("mq.connect_failed", "error", err, "continuing_without_mq", true)
-			mqConn = nil
-		} else {
-			if err := mq.DeclareTopology(mqConn); err != nil {
-				exitWithError(baseLogger, "mq.topology_declaration_failed", err)
-			}
-			consumer := mq.NewConsumer(mqConn, sqlStore, baseLogger)
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				baseLogger.Info("mq.consumer.started")
-				if err := consumer.Run(ctx); err != nil {
-					baseLogger.Warn("mq.consumer.exited", "error", err)
-				}
-				baseLogger.Info("mq.consumer.stopped")
-			}()
-		}
-	}
+	// Start MQ consumer supervision.
+	mqConn := startMQ(ctx, &wg, cfg.AMQPURL, sqlStore, baseLogger, defaultMQStartupDeps)
 
 	// Start HTTP server
 	go func() {
@@ -167,6 +192,77 @@ func buildSSHExecutorConfig(cfg *config.Config) remote.SSHExecutorConfig {
 		Options:      strings.Fields(cfg.SSHOptions),
 		IdentityFile: cfg.SSHPrivateKeyPath,
 	}
+}
+
+func startMQ(ctx context.Context, wg *sync.WaitGroup, amqpURL string, s store.Store, logger *slog.Logger, deps mqStartupDeps) mqConnection {
+	deps = deps.withDefaults()
+	if amqpURL == "" {
+		logger.Info("mq.disabled")
+		return nil
+	}
+
+	conn := deps.newConnection(amqpURL, logger)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		activationRetries := 0
+		needConnect := true
+
+		for {
+			if needConnect {
+				if err := conn.Connect(ctx); err != nil {
+					return
+				}
+				needConnect = false
+			}
+
+			if err := deps.declareTopology(conn); err != nil {
+				activationRetries++
+				logger.Warn("mq.startup_activation_failed", "attempt", activationRetries, "error", err)
+				if err := conn.Reconnect(ctx); err != nil {
+					return
+				}
+				continue
+			}
+
+			if activationRetries > 0 {
+				logger.Info("mq.activated_after_retry", "attempts", activationRetries)
+			} else {
+				logger.Info("mq.activated")
+			}
+
+			consumer := deps.newConsumer(conn, s, logger)
+			logger.Info("mq.consumer.started")
+			err := consumer.Run(ctx)
+			if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				logger.Info("mq.consumer.stopped")
+				return
+			}
+
+			logger.Warn("mq.consumer.exited", "error", err)
+			logger.Info("mq.consumer.stopped")
+			activationRetries++
+			if err := conn.Reconnect(ctx); err != nil {
+				return
+			}
+		}
+	}()
+
+	return conn
+}
+
+func (d mqStartupDeps) withDefaults() mqStartupDeps {
+	if d.newConnection == nil {
+		d.newConnection = defaultMQStartupDeps.newConnection
+	}
+	if d.declareTopology == nil {
+		d.declareTopology = defaultMQStartupDeps.declareTopology
+	}
+	if d.newConsumer == nil {
+		d.newConsumer = defaultMQStartupDeps.newConsumer
+	}
+	return d
 }
 
 func exitWithError(logger *slog.Logger, msg string, err error) {

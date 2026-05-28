@@ -28,10 +28,17 @@ func NewConnection(url string, logger *slog.Logger) *Connection {
 func (c *Connection) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.connectLocked(ctx)
+	attempts, err := retryWithBackoff(ctx, c.logger, waitWithContext, "mq.connect_attempt_failed", c.connectLocked)
+	if err != nil {
+		return err
+	}
+	if attempts > 0 {
+		c.logger.Info("mq.connected_after_retry", "attempts", attempts)
+	}
+	return err
 }
 
-func (c *Connection) connectLocked(ctx context.Context) error {
+func (c *Connection) connectLocked() error {
 	conn, err := amqp.Dial(c.url)
 	if err != nil {
 		return err
@@ -58,26 +65,51 @@ func (c *Connection) Reconnect(ctx context.Context) error {
 
 	c.closeLocked()
 
+	attempts, err := retryWithBackoff(ctx, c.logger, waitWithContext, "mq.reconnect_attempt_failed", c.connectLocked)
+	if err != nil {
+		return err
+	}
+	if attempts > 0 {
+		c.logger.Info("mq.reconnected", "attempts", attempts)
+	}
+	return nil
+}
+
+func retryWithBackoff(ctx context.Context, logger *slog.Logger, wait func(context.Context, time.Duration) error, failureEvent string, op func() error) (int, error) {
 	var attempt int
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return attempt, ctx.Err()
 		default:
 		}
 
-		if err := c.connectLocked(ctx); err != nil {
+		if err := op(); err != nil {
 			attempt++
-			backoff := time.Duration(math.Min(float64(time.Second)*math.Pow(2, float64(attempt)), float64(30*time.Second)))
-			c.logger.Warn("mq.reconnect_attempt_failed", "attempt", attempt, "error", err, "retry_in", backoff)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
+			backoff := retryBackoff(attempt)
+			logger.Warn(failureEvent, "attempt", attempt, "error", err, "retry_in", backoff)
+			if err := wait(ctx, backoff); err != nil {
+				return attempt, err
 			}
 			continue
 		}
-		c.logger.Info("mq.reconnected", "attempts", attempt)
+
+		return attempt, nil
+	}
+}
+
+func retryBackoff(attempt int) time.Duration {
+	return time.Duration(math.Min(float64(time.Second)*math.Pow(2, float64(attempt-1)), float64(30*time.Second)))
+}
+
+func waitWithContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
 		return nil
 	}
 }
