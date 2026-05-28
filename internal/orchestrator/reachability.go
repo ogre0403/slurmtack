@@ -23,6 +23,7 @@ func PollSSHReachable(ctx context.Context, runner remote.Runner, host, execution
 	deadline := time.After(cfg.Timeout)
 	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
+	rebootObserved := false
 
 	for {
 		select {
@@ -42,10 +43,41 @@ func PollSSHReachable(ctx context.Context, runner remote.Runner, host, execution
 			})
 			cancel()
 			if err == nil {
-				logger.Info(trace.EventWaitSatisfied, "component", "reachability", "host", host)
+				if !rebootObserved {
+					logger.Debug(trace.EventWaitProgress,
+						"component", "reachability",
+						"host", host,
+						"probe_phase", "waiting_for_reboot_start",
+						"probe_result", "ignored_early_success",
+					)
+					continue
+				}
+				logger.Info(trace.EventWaitSatisfied,
+					"component", "reachability",
+					"host", host,
+					"probe_phase", "waiting_for_host_return",
+					"probe_result", "post_reboot_recovery",
+				)
 				return nil
 			}
-			logger.Debug(trace.EventWaitProgress, "component", "reachability", "host", host, "error", err.Error())
+			if !rebootObserved {
+				rebootObserved = true
+				logger.Debug(trace.EventWaitProgress,
+					"component", "reachability",
+					"host", host,
+					"probe_phase", "waiting_for_reboot_start",
+					"probe_result", "reboot_progress_observed",
+					"error", err.Error(),
+				)
+				continue
+			}
+			logger.Debug(trace.EventWaitProgress,
+				"component", "reachability",
+				"host", host,
+				"probe_phase", "waiting_for_host_return",
+				"probe_result", "still_unreachable",
+				"error", err.Error(),
+			)
 		}
 	}
 }

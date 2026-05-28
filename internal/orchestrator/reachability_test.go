@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -24,6 +25,43 @@ func (r *recordingSSHRunner) Execute(_ context.Context, req remote.CommandReques
 		return r.result, r.err
 	}
 	return &remote.CommandResult{ExitCode: 0}, r.err
+}
+
+type scriptedSSHResponse struct {
+	result *remote.CommandResult
+	err    error
+}
+
+type scriptedSSHRunner struct {
+	t              *testing.T
+	requests       []remote.CommandRequest
+	responses      []scriptedSSHResponse
+	defaultResp    *scriptedSSHResponse
+	onBeforeReturn func(call int, req remote.CommandRequest)
+}
+
+func (r *scriptedSSHRunner) Execute(_ context.Context, req remote.CommandRequest) (*remote.CommandResult, error) {
+	r.t.Helper()
+	r.requests = append(r.requests, req)
+	call := len(r.requests)
+	if r.onBeforeReturn != nil {
+		r.onBeforeReturn(call, req)
+	}
+	if len(r.responses) == 0 {
+		if r.defaultResp != nil {
+			if r.defaultResp.result != nil {
+				return r.defaultResp.result, r.defaultResp.err
+			}
+			return &remote.CommandResult{ExitCode: 0}, r.defaultResp.err
+		}
+		return &remote.CommandResult{ExitCode: 0}, nil
+	}
+	resp := r.responses[0]
+	r.responses = r.responses[1:]
+	if resp.result != nil {
+		return resp.result, resp.err
+	}
+	return &remote.CommandResult{ExitCode: 0}, resp.err
 }
 
 func newExecutionForState(state domain.SwitchState) *domain.Execution {
@@ -99,7 +137,14 @@ func TestDoRebootDispatchesExactCommand(t *testing.T) {
 
 func TestDoSSHPollThreadsExecutionMetadataIntoProbe(t *testing.T) {
 	logger, _ := newCaptureLogger()
-	sshRunner := &recordingSSHRunner{}
+	sshRunner := &scriptedSSHRunner{
+		t: t,
+		responses: []scriptedSSHResponse{{
+			err: errors.New("connection refused"),
+		}, {
+			result: &remote.CommandResult{ExitCode: 0},
+		}},
+	}
 	orch, s, exec := newSSHOrchestrator(t, sshRunner, logger)
 	exec.CurrentState = domain.StateRebooting
 	if err := s.UpdateExecution(context.Background(), exec); err != nil {
@@ -109,8 +154,8 @@ func TestDoSSHPollThreadsExecutionMetadataIntoProbe(t *testing.T) {
 	if err := orch.doSSHPoll(context.Background(), exec); err != nil {
 		t.Fatalf("doSSHPoll() error = %v", err)
 	}
-	if len(sshRunner.requests) != 1 {
-		t.Fatalf("sshRunner requests = %d, want 1", len(sshRunner.requests))
+	if len(sshRunner.requests) != 2 {
+		t.Fatalf("sshRunner requests = %d, want 2", len(sshRunner.requests))
 	}
 	req := sshRunner.requests[0]
 	if req.Host != exec.NodeName {
@@ -128,6 +173,14 @@ func TestDoSSHPollThreadsExecutionMetadataIntoProbe(t *testing.T) {
 	if req.StepName != sshProbeStepName {
 		t.Fatalf("probe step_name = %q, want %q", req.StepName, sshProbeStepName)
 	}
+	for i, probeReq := range sshRunner.requests[1:] {
+		if probeReq.ExecutionID != exec.ID {
+			t.Fatalf("probe %d execution_id = %q, want %q", i+2, probeReq.ExecutionID, exec.ID)
+		}
+		if probeReq.StepName != sshProbeStepName {
+			t.Fatalf("probe %d step_name = %q, want %q", i+2, probeReq.StepName, sshProbeStepName)
+		}
+	}
 
 	updated, err := s.GetExecution(context.Background(), exec.ID)
 	if err != nil {
@@ -135,5 +188,169 @@ func TestDoSSHPollThreadsExecutionMetadataIntoProbe(t *testing.T) {
 	}
 	if updated.CurrentState != domain.StateHostReachable {
 		t.Fatalf("execution state = %s, want %s", updated.CurrentState, domain.StateHostReachable)
+	}
+}
+
+func TestDoSSHPollIgnoresEarlySuccessUntilHostReturns(t *testing.T) {
+	logger, captured := newCaptureLogger()
+	sshRunner := &scriptedSSHRunner{
+		t: t,
+		responses: []scriptedSSHResponse{{
+			result: &remote.CommandResult{ExitCode: 0},
+		}, {
+			result: &remote.CommandResult{ExitCode: 0},
+		}, {
+			err: errors.New("connection refused"),
+		}, {
+			result: &remote.CommandResult{ExitCode: 0},
+		}},
+	}
+	orch, s, exec := newSSHOrchestrator(t, sshRunner, logger)
+	exec.CurrentState = domain.StateRebooting
+	if err := s.UpdateExecution(context.Background(), exec); err != nil {
+		t.Fatalf("update execution: %v", err)
+	}
+	sshRunner.onBeforeReturn = func(call int, _ remote.CommandRequest) {
+		updated, err := s.GetExecution(context.Background(), exec.ID)
+		if err != nil {
+			t.Fatalf("get execution during probe %d: %v", call, err)
+		}
+		if updated.CurrentState != domain.StateRebooting {
+			t.Fatalf("execution state during probe %d = %s, want %s", call, updated.CurrentState, domain.StateRebooting)
+		}
+	}
+
+	if err := orch.doSSHPoll(context.Background(), exec); err != nil {
+		t.Fatalf("doSSHPoll() error = %v", err)
+	}
+	if len(sshRunner.requests) != 4 {
+		t.Fatalf("sshRunner requests = %d, want 4", len(sshRunner.requests))
+	}
+
+	updated, err := s.GetExecution(context.Background(), exec.ID)
+	if err != nil {
+		t.Fatalf("get execution: %v", err)
+	}
+	if updated.CurrentState != domain.StateHostReachable {
+		t.Fatalf("execution state = %s, want %s", updated.CurrentState, domain.StateHostReachable)
+	}
+
+	progressLogs := captured.findAll("wait.progress")
+	if len(progressLogs) < 3 {
+		t.Fatalf("wait.progress logs = %d, want at least 3", len(progressLogs))
+	}
+	if progressLogs[0].Attrs["probe_result"] != "ignored_early_success" {
+		t.Fatalf("first wait.progress probe_result = %q, want %q", progressLogs[0].Attrs["probe_result"], "ignored_early_success")
+	}
+	if progressLogs[1].Attrs["probe_result"] != "ignored_early_success" {
+		t.Fatalf("second wait.progress probe_result = %q, want %q", progressLogs[1].Attrs["probe_result"], "ignored_early_success")
+	}
+	if progressLogs[2].Attrs["probe_result"] != "reboot_progress_observed" {
+		t.Fatalf("third wait.progress probe_result = %q, want %q", progressLogs[2].Attrs["probe_result"], "reboot_progress_observed")
+	}
+
+	satisfied := captured.find("wait.satisfied")
+	if satisfied == nil {
+		t.Fatal("expected wait.satisfied log, got none")
+	}
+	if satisfied.Attrs["probe_result"] != "post_reboot_recovery" {
+		t.Fatalf("wait.satisfied probe_result = %q, want %q", satisfied.Attrs["probe_result"], "post_reboot_recovery")
+	}
+}
+
+func TestDoSSHPollFailsWhenHostNeverBecomesUnreachable(t *testing.T) {
+	logger, captured := newCaptureLogger()
+	sshRunner := &scriptedSSHRunner{
+		t: t,
+		responses: []scriptedSSHResponse{{
+			result: &remote.CommandResult{ExitCode: 0},
+		}, {
+			result: &remote.CommandResult{ExitCode: 0},
+		}, {
+			result: &remote.CommandResult{ExitCode: 0},
+		}, {
+			result: &remote.CommandResult{ExitCode: 0},
+		}},
+		defaultResp: &scriptedSSHResponse{result: &remote.CommandResult{ExitCode: 0}},
+	}
+	orch, s, exec := newSSHOrchestrator(t, sshRunner, logger)
+	exec.CurrentState = domain.StateRebooting
+	if err := s.UpdateExecution(context.Background(), exec); err != nil {
+		t.Fatalf("update execution: %v", err)
+	}
+
+	if err := orch.doSSHPoll(context.Background(), exec); err != nil {
+		t.Fatalf("doSSHPoll() error = %v", err)
+	}
+
+	updated, err := s.GetExecution(context.Background(), exec.ID)
+	if err != nil {
+		t.Fatalf("get execution: %v", err)
+	}
+	if updated.CurrentState != domain.StateFailedManualRecovery {
+		t.Fatalf("execution state = %s, want %s", updated.CurrentState, domain.StateFailedManualRecovery)
+	}
+	if updated.FinalErrorCode != "ssh_poll_timeout" {
+		t.Fatalf("final error code = %q, want %q", updated.FinalErrorCode, "ssh_poll_timeout")
+	}
+
+	progressLogs := captured.findAll("wait.progress")
+	if len(progressLogs) == 0 {
+		t.Fatal("expected wait.progress logs, got none")
+	}
+	for i, record := range progressLogs {
+		if record.Attrs["probe_result"] != "ignored_early_success" {
+			t.Fatalf("wait.progress %d probe_result = %q, want %q", i+1, record.Attrs["probe_result"], "ignored_early_success")
+		}
+	}
+}
+
+func TestDoSSHPollFailsWhenHostDoesNotReturnAfterGoingDown(t *testing.T) {
+	logger, captured := newCaptureLogger()
+	sshRunner := &scriptedSSHRunner{
+		t: t,
+		responses: []scriptedSSHResponse{{
+			err: errors.New("connection refused"),
+		}, {
+			err: errors.New("connection refused"),
+		}, {
+			err: errors.New("connection refused"),
+		}, {
+			err: errors.New("connection refused"),
+		}},
+		defaultResp: &scriptedSSHResponse{err: errors.New("connection refused")},
+	}
+	orch, s, exec := newSSHOrchestrator(t, sshRunner, logger)
+	exec.CurrentState = domain.StateRebooting
+	if err := s.UpdateExecution(context.Background(), exec); err != nil {
+		t.Fatalf("update execution: %v", err)
+	}
+
+	if err := orch.doSSHPoll(context.Background(), exec); err != nil {
+		t.Fatalf("doSSHPoll() error = %v", err)
+	}
+
+	updated, err := s.GetExecution(context.Background(), exec.ID)
+	if err != nil {
+		t.Fatalf("get execution: %v", err)
+	}
+	if updated.CurrentState != domain.StateFailedManualRecovery {
+		t.Fatalf("execution state = %s, want %s", updated.CurrentState, domain.StateFailedManualRecovery)
+	}
+	if updated.FinalErrorCode != "ssh_poll_timeout" {
+		t.Fatalf("final error code = %q, want %q", updated.FinalErrorCode, "ssh_poll_timeout")
+	}
+
+	progressLogs := captured.findAll("wait.progress")
+	if len(progressLogs) < 2 {
+		t.Fatalf("wait.progress logs = %d, want at least 2", len(progressLogs))
+	}
+	if progressLogs[0].Attrs["probe_result"] != "reboot_progress_observed" {
+		t.Fatalf("first wait.progress probe_result = %q, want %q", progressLogs[0].Attrs["probe_result"], "reboot_progress_observed")
+	}
+	for i, record := range progressLogs[1:] {
+		if record.Attrs["probe_result"] != "still_unreachable" {
+			t.Fatalf("wait.progress %d probe_result = %q, want %q", i+2, record.Attrs["probe_result"], "still_unreachable")
+		}
 	}
 }
