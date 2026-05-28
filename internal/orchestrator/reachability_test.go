@@ -135,6 +135,98 @@ func TestDoRebootDispatchesExactCommand(t *testing.T) {
 	}
 }
 
+func TestDoReconfigureStopsAndDisablesSlurmdBeforeTransition(t *testing.T) {
+	logger, _ := newCaptureLogger()
+	sshRunner := &recordingSSHRunner{}
+	orch, s, exec := newSSHOrchestrator(t, sshRunner, logger)
+	exec.Direction = domain.DirectionSlurmToOpenStack
+	exec.CurrentState = domain.StateSourceDetached
+	exec.DesiredOwner = domain.OwnerOpenStack
+	exec.PreviousOwner = domain.OwnerSlurm
+	if err := s.UpdateExecution(context.Background(), exec); err != nil {
+		t.Fatalf("update execution: %v", err)
+	}
+
+	if err := orch.doReconfigure(context.Background(), exec); err != nil {
+		t.Fatalf("doReconfigure() error = %v", err)
+	}
+	if len(sshRunner.requests) != 2 {
+		t.Fatalf("sshRunner requests = %d, want 2", len(sshRunner.requests))
+	}
+	for i, want := range []struct {
+		action string
+		step   string
+	}{
+		{action: "stop", step: "slurmd_stop"},
+		{action: "disable", step: "slurmd_disable"},
+	} {
+		req := sshRunner.requests[i]
+		if req.Host != exec.NodeName {
+			t.Fatalf("request %d host = %q, want %q", i+1, req.Host, exec.NodeName)
+		}
+		if req.Command != "systemctl" {
+			t.Fatalf("request %d command = %q, want %q", i+1, req.Command, "systemctl")
+		}
+		if len(req.Args) != 2 || req.Args[0] != want.action || req.Args[1] != "slurmd" {
+			t.Fatalf("request %d args = %#v, want [%q %q]", i+1, req.Args, want.action, "slurmd")
+		}
+		if req.ExecutionID != exec.ID {
+			t.Fatalf("request %d execution_id = %q, want %q", i+1, req.ExecutionID, exec.ID)
+		}
+		if req.StepName != want.step {
+			t.Fatalf("request %d step_name = %q, want %q", i+1, req.StepName, want.step)
+		}
+		if req.Timeout != slurmdCommandTimeout {
+			t.Fatalf("request %d timeout = %s, want %s", i+1, req.Timeout, slurmdCommandTimeout)
+		}
+	}
+
+	updated, err := s.GetExecution(context.Background(), exec.ID)
+	if err != nil {
+		t.Fatalf("get execution: %v", err)
+	}
+	if updated.CurrentState != domain.StateHostReconfiguring {
+		t.Fatalf("execution state = %s, want %s", updated.CurrentState, domain.StateHostReconfiguring)
+	}
+}
+
+func TestDoReconfigureBlocksWhenSlurmdStopFails(t *testing.T) {
+	logger, _ := newCaptureLogger()
+	sshRunner := &scriptedSSHRunner{
+		t: t,
+		responses: []scriptedSSHResponse{{
+			result: &remote.CommandResult{ExitCode: 1, Stderr: "systemd offline"},
+		}},
+	}
+	orch, s, exec := newSSHOrchestrator(t, sshRunner, logger)
+	exec.Direction = domain.DirectionSlurmToOpenStack
+	exec.CurrentState = domain.StateSourceDetached
+	exec.DesiredOwner = domain.OwnerOpenStack
+	exec.PreviousOwner = domain.OwnerSlurm
+	if err := s.UpdateExecution(context.Background(), exec); err != nil {
+		t.Fatalf("update execution: %v", err)
+	}
+
+	err := orch.doReconfigure(context.Background(), exec)
+	if err == nil {
+		t.Fatal("doReconfigure() error = nil, want slurmd stop failure")
+	}
+	if err.Error() != "slurmd stop failed: exit code 1: systemd offline" {
+		t.Fatalf("doReconfigure() error = %q, want %q", err.Error(), "slurmd stop failed: exit code 1: systemd offline")
+	}
+	if len(sshRunner.requests) != 1 {
+		t.Fatalf("sshRunner requests = %d, want 1", len(sshRunner.requests))
+	}
+
+	updated, getErr := s.GetExecution(context.Background(), exec.ID)
+	if getErr != nil {
+		t.Fatalf("get execution: %v", getErr)
+	}
+	if updated.CurrentState != domain.StateSourceDetached {
+		t.Fatalf("execution state = %s, want %s", updated.CurrentState, domain.StateSourceDetached)
+	}
+}
+
 func TestDoSSHPollThreadsExecutionMetadataIntoProbe(t *testing.T) {
 	logger, _ := newCaptureLogger()
 	sshRunner := &scriptedSSHRunner{

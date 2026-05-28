@@ -3,7 +3,9 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/slurmtack/slurmtack/internal/domain"
@@ -30,6 +32,8 @@ type Orchestrator struct {
 	cfg       Config
 	logger    *slog.Logger
 }
+
+const slurmdCommandTimeout = 30 * time.Second
 
 func New(s store.Store, runner *engine.Runner, sshRunner remote.Runner, slurmClient slurm.Client, osClient openstack.Client, cfg Config, logger *slog.Logger) *Orchestrator {
 	return &Orchestrator{
@@ -379,7 +383,55 @@ func (o *Orchestrator) doVerifySourceQuiesce(ctx context.Context, exec *domain.E
 }
 
 func (o *Orchestrator) doReconfigure(ctx context.Context, exec *domain.Execution) error {
+	if exec.Direction == domain.DirectionSlurmToOpenStack {
+		if err := o.runSlurmdServiceCommands(ctx, exec, "stop", "disable"); err != nil {
+			return err
+		}
+	}
+
 	return o.runner.Transition(ctx, exec.ID, domain.StateHostReconfiguring)
+}
+
+func (o *Orchestrator) runSlurmdServiceCommands(ctx context.Context, exec *domain.Execution, actions ...string) error {
+	for _, action := range actions {
+		if err := o.runSlurmdServiceCommand(ctx, exec, action); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o *Orchestrator) runSlurmdServiceCommand(ctx context.Context, exec *domain.Execution, action string) error {
+	if o.sshRunner == nil {
+		return errors.New("ssh runner not configured")
+	}
+
+	result, err := o.sshRunner.Execute(ctx, remote.CommandRequest{
+		Host:        exec.NodeName,
+		Command:     "systemctl",
+		Args:        []string{action, "slurmd"},
+		ExecutionID: exec.ID,
+		StepName:    "slurmd_" + action,
+		Timeout:     slurmdCommandTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("slurmd %s failed: %w", action, err)
+	}
+	if result == nil {
+		return fmt.Errorf("slurmd %s failed: empty ssh result", action)
+	}
+	if result.ExitCode != 0 {
+		message := strings.TrimSpace(result.Stderr)
+		if message == "" {
+			message = strings.TrimSpace(result.Stdout)
+		}
+		if message == "" {
+			return fmt.Errorf("slurmd %s failed: exit code %d", action, result.ExitCode)
+		}
+		return fmt.Errorf("slurmd %s failed: exit code %d: %s", action, result.ExitCode, message)
+	}
+
+	return nil
 }
 
 func (o *Orchestrator) doReboot(ctx context.Context, exec *domain.Execution) error {
@@ -429,6 +481,9 @@ func (o *Orchestrator) doAttach(ctx context.Context, exec *domain.Execution) err
 			return err
 		}
 	} else {
+		if err := o.runSlurmdServiceCommands(ctx, exec, "enable", "start"); err != nil {
+			return err
+		}
 		if o.slurm == nil {
 			return errors.New("slurm client not configured")
 		}

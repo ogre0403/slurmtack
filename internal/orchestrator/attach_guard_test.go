@@ -2,12 +2,14 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/slurmtack/slurmtack/internal/domain"
 	"github.com/slurmtack/slurmtack/internal/engine"
+	"github.com/slurmtack/slurmtack/internal/remote"
 	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
 )
@@ -86,10 +88,11 @@ func TestDoAttachGuardsResumeForOpenStackToSlurm(t *testing.T) {
 			}
 
 			runner := engine.NewRunner(s, nil)
+			sshRunner := &recordingSSHRunner{}
 			client := &attachTestSlurmClient{
 				nodeState: &slurm.NodeState{NodeName: exec.NodeName, State: tt.state},
 			}
-			orch := New(s, runner, nil, client, nil, Config{}, nil)
+			orch := New(s, runner, sshRunner, client, nil, Config{}, nil)
 
 			err := orch.doAttach(ctx, exec)
 			if tt.wantErr == "" {
@@ -111,6 +114,36 @@ func TestDoAttachGuardsResumeForOpenStackToSlurm(t *testing.T) {
 			if client.resumeCalls != tt.wantResumeCalls {
 				t.Fatalf("ResumeNode() calls = %d, want %d", client.resumeCalls, tt.wantResumeCalls)
 			}
+			if len(sshRunner.requests) != 2 {
+				t.Fatalf("sshRunner requests = %d, want 2", len(sshRunner.requests))
+			}
+			for i, want := range []struct {
+				action string
+				step   string
+			}{
+				{action: "enable", step: "slurmd_enable"},
+				{action: "start", step: "slurmd_start"},
+			} {
+				req := sshRunner.requests[i]
+				if req.Host != exec.NodeName {
+					t.Fatalf("request %d host = %q, want %q", i+1, req.Host, exec.NodeName)
+				}
+				if req.Command != "systemctl" {
+					t.Fatalf("request %d command = %q, want %q", i+1, req.Command, "systemctl")
+				}
+				if len(req.Args) != 2 || req.Args[0] != want.action || req.Args[1] != "slurmd" {
+					t.Fatalf("request %d args = %#v, want [%q %q]", i+1, req.Args, want.action, "slurmd")
+				}
+				if req.ExecutionID != exec.ID {
+					t.Fatalf("request %d execution_id = %q, want %q", i+1, req.ExecutionID, exec.ID)
+				}
+				if req.StepName != want.step {
+					t.Fatalf("request %d step_name = %q, want %q", i+1, req.StepName, want.step)
+				}
+				if req.Timeout != slurmdCommandTimeout {
+					t.Fatalf("request %d timeout = %s, want %s", i+1, req.Timeout, slurmdCommandTimeout)
+				}
+			}
 
 			updated, err := s.GetExecution(ctx, exec.ID)
 			if err != nil {
@@ -120,5 +153,63 @@ func TestDoAttachGuardsResumeForOpenStackToSlurm(t *testing.T) {
 				t.Fatalf("CurrentState = %s, want %s", updated.CurrentState, tt.wantState)
 			}
 		})
+	}
+}
+
+func TestDoAttachBlocksWhenSlurmdRestoreFails(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemoryStore()
+	exec := &domain.Execution{
+		ID:            "exec-attach-fail",
+		NodeName:      "gpu-node-01",
+		Direction:     domain.DirectionOpenStackToSlurm,
+		RequestedBy:   "test",
+		RequestedAt:   time.Now(),
+		CurrentState:  domain.StateHostReachable,
+		DesiredOwner:  domain.OwnerSlurm,
+		PreviousOwner: domain.OwnerOpenStack,
+		StateVersion:  1,
+		OverallStatus: domain.OverallStatusActive,
+	}
+	if err := s.CreateExecution(ctx, exec); err != nil {
+		t.Fatalf("CreateExecution() error = %v", err)
+	}
+
+	runner := engine.NewRunner(s, nil)
+	sshRunner := &scriptedSSHRunner{
+		t: t,
+		responses: []scriptedSSHResponse{{
+			result: &remote.CommandResult{ExitCode: 1, Stderr: "permission denied"},
+			err:    errors.New("permission denied"),
+		}},
+	}
+	client := &attachTestSlurmClient{
+		nodeState: &slurm.NodeState{NodeName: exec.NodeName, State: "drained"},
+	}
+	orch := New(s, runner, sshRunner, client, nil, Config{}, nil)
+
+	err := orch.doAttach(ctx, exec)
+	if err == nil {
+		t.Fatal("doAttach() error = nil, want slurmd restore failure")
+	}
+	if !strings.Contains(err.Error(), "slurmd enable failed") {
+		t.Fatalf("doAttach() error = %q, want substring %q", err.Error(), "slurmd enable failed")
+	}
+	if client.getNodeStateCalls != 0 {
+		t.Fatalf("GetNodeState() calls = %d, want 0", client.getNodeStateCalls)
+	}
+	if client.resumeCalls != 0 {
+		t.Fatalf("ResumeNode() calls = %d, want 0", client.resumeCalls)
+	}
+	if len(sshRunner.requests) != 1 {
+		t.Fatalf("sshRunner requests = %d, want 1", len(sshRunner.requests))
+	}
+
+	updated, getErr := s.GetExecution(ctx, exec.ID)
+	if getErr != nil {
+		t.Fatalf("GetExecution() error = %v", getErr)
+	}
+	if updated.CurrentState != domain.StateHostReachable {
+		t.Fatalf("CurrentState = %s, want %s", updated.CurrentState, domain.StateHostReachable)
 	}
 }
