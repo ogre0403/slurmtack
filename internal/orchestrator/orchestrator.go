@@ -433,7 +433,7 @@ func (o *Orchestrator) doAttach(ctx context.Context, exec *domain.Execution) err
 		if o.slurm == nil {
 			return errors.New("slurm client not configured")
 		}
-		if err := o.slurm.ResumeNode(ctx, exec.NodeName); err != nil {
+		if err := slurm.EnsureNodeReadyForAttach(ctx, o.slurm, exec.NodeName); err != nil {
 			return err
 		}
 	}

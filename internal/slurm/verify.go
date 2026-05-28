@@ -22,7 +22,7 @@ func (h *AttachHandler) Attach(ctx context.Context, exec *domain.Execution) erro
 }
 
 func (h *AttachHandler) Execute(ctx context.Context, exec *domain.Execution) error {
-	return h.client.ResumeNode(ctx, exec.NodeName)
+	return EnsureNodeReadyForAttach(ctx, h.client, exec.NodeName)
 }
 
 type VerifyHandler struct {

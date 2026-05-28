@@ -44,10 +44,16 @@ func (f *FakeSlurmClient) DrainNode(_ context.Context, nodeName, reason string) 
 }
 
 func (f *FakeSlurmClient) ResumeNode(_ context.Context, nodeName string) error {
-	f.Drained[nodeName] = false
-	if node, ok := f.Nodes[nodeName]; ok {
-		node.State = "idle"
+	node, ok := f.Nodes[nodeName]
+	if !ok {
+		return fmt.Errorf("node %s not found", nodeName)
 	}
+	if slurm.ClassifyAttachState(node.State) != slurm.AttachStateResumeRequired {
+		return fmt.Errorf("slurm_update error: Invalid node state specified")
+	}
+
+	f.Drained[nodeName] = false
+	node.State = "idle"
 	return nil
 }
 
