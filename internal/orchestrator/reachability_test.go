@@ -11,6 +11,7 @@ import (
 	"github.com/slurmtack/slurmtack/internal/engine"
 	"github.com/slurmtack/slurmtack/internal/remote"
 	"github.com/slurmtack/slurmtack/internal/store"
+	"github.com/slurmtack/slurmtack/internal/trace"
 )
 
 type recordingSSHRunner struct {
@@ -280,6 +281,28 @@ func TestDoSSHPollThreadsExecutionMetadataIntoProbe(t *testing.T) {
 	}
 	if updated.CurrentState != domain.StateHostReachable {
 		t.Fatalf("execution state = %s, want %s", updated.CurrentState, domain.StateHostReachable)
+	}
+}
+
+func TestRunRecoversRebootingExecution(t *testing.T) {
+	logger, captured := newCaptureLogger()
+	sshRunner := &scriptedSSHRunner{t: t}
+	orch, s, exec := newSSHOrchestrator(t, sshRunner, logger)
+	exec.CurrentState = domain.StateRebooting
+	if err := s.UpdateExecution(context.Background(), exec); err != nil {
+		t.Fatalf("update execution: %v", err)
+	}
+
+	runCtx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	orch.Run(runCtx)
+
+	selected := captured.find(trace.EventActionSelected)
+	if selected == nil {
+		t.Fatal("expected action.selected log")
+	}
+	if selected.Attrs["action"] != "ssh_poll" {
+		t.Fatalf("action.selected action = %q, want %q", selected.Attrs["action"], "ssh_poll")
 	}
 }
 

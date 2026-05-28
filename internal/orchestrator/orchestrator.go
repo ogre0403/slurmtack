@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/slurmtack/slurmtack/internal/domain"
@@ -31,6 +32,8 @@ type Orchestrator struct {
 	openstack openstack.Client
 	cfg       Config
 	logger    *slog.Logger
+	mu        sync.Mutex
+	workers   map[string]struct{}
 }
 
 const slurmdCommandTimeout = 30 * time.Second
@@ -44,24 +47,26 @@ func New(s store.Store, runner *engine.Runner, sshRunner remote.Runner, slurmCli
 		openstack: osClient,
 		cfg:       cfg,
 		logger:    trace.OrDefault(logger),
+		workers:   make(map[string]struct{}),
 	}
 }
 
 func (o *Orchestrator) Run(ctx context.Context) {
-	ticker := time.NewTicker(o.cfg.TickInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			o.tick(ctx)
-		}
-	}
+	o.recoverActiveExecutions(ctx)
+	<-ctx.Done()
 }
 
-func (o *Orchestrator) tick(ctx context.Context) {
+func (o *Orchestrator) AdmitExecution(ctx context.Context, executionID string) {
+	if ctx.Err() != nil || executionID == "" {
+		return
+	}
+	if !o.startWorker(executionID) {
+		return
+	}
+	go o.runExecution(ctx, executionID)
+}
+
+func (o *Orchestrator) recoverActiveExecutions(ctx context.Context) {
 	executions, err := o.store.ListActiveExecutions(ctx)
 	if err != nil {
 		o.logger.Error("orchestrator.list_active_executions_failed", "error", err)
@@ -72,7 +77,141 @@ func (o *Orchestrator) tick(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		if o.shouldRecover(exec) {
+			o.AdmitExecution(ctx, exec.ID)
+		}
+	}
+}
+
+func (o *Orchestrator) startWorker(executionID string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if _, exists := o.workers[executionID]; exists {
+		return false
+	}
+	o.workers[executionID] = struct{}{}
+	return true
+}
+
+func (o *Orchestrator) finishWorker(executionID string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	delete(o.workers, executionID)
+}
+
+func (o *Orchestrator) runExecution(ctx context.Context, executionID string) {
+	defer o.finishWorker(executionID)
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		exec, err := o.store.GetExecution(ctx, executionID)
+		if errors.Is(err, store.ErrNotFound) {
+			return
+		}
+		if err != nil {
+			o.logger.Warn("orchestrator.get_execution_failed", "execution_id", executionID, "error", err.Error())
+			return
+		}
+		if exec.CurrentState.IsTerminal() || exec.OverallStatus != domain.OverallStatusActive {
+			return
+		}
+
+		action := o.determineAction(exec)
+		if action == actionNone {
+			return
+		}
+
+		previousState := exec.CurrentState
+		previousVersion := exec.StateVersion
 		o.processExecution(ctx, exec)
+
+		fresh, err := o.store.GetExecution(ctx, executionID)
+		if errors.Is(err, store.ErrNotFound) {
+			return
+		}
+		if err != nil {
+			o.logger.Warn("orchestrator.get_execution_failed", "execution_id", executionID, "error", err.Error())
+			return
+		}
+		if fresh.CurrentState.IsTerminal() || fresh.OverallStatus != domain.OverallStatusActive {
+			return
+		}
+
+		delay, cont := o.nextStep(fresh, previousState, previousVersion)
+		if !cont {
+			return
+		}
+		if delay > 0 {
+			if err := waitForNextPoll(ctx, delay); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func (o *Orchestrator) nextStep(exec *domain.Execution, previousState domain.SwitchState, previousVersion int64) (time.Duration, bool) {
+	if exec.CurrentState == previousState && exec.StateVersion == previousVersion {
+		if exec.Direction == domain.DirectionOpenStackToSlurm && exec.CurrentState == domain.StateSourceQuiescing {
+			return o.localPollInterval(), true
+		}
+		return 0, false
+	}
+
+	switch exec.CurrentState {
+	case domain.StateAwaitingSourceAllocation, domain.StateAwaitingTargetNode:
+		return 0, false
+	case domain.StateSourceQuiescing:
+		if exec.Direction == domain.DirectionOpenStackToSlurm {
+			return o.localPollInterval(), true
+		}
+		return 0, false
+	default:
+		return 0, true
+	}
+}
+
+func (o *Orchestrator) localPollInterval() time.Duration {
+	if o.cfg.TickInterval > 0 {
+		return o.cfg.TickInterval
+	}
+	return 100 * time.Millisecond
+}
+
+func waitForNextPoll(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (o *Orchestrator) shouldRecover(exec *domain.Execution) bool {
+	switch exec.CurrentState {
+	case domain.StateNodeIdentified,
+		domain.StateLocked,
+		domain.StatePrecheckPassed,
+		domain.StateSourceDetached,
+		domain.StateHostReconfiguring,
+		domain.StateRebooting,
+		domain.StateHostReachable,
+		domain.StateTargetAttaching,
+		domain.StateVerifying:
+		return true
+	case domain.StateSourceQuiescing:
+		return exec.Direction == domain.DirectionOpenStackToSlurm
+	default:
+		return false
 	}
 }
 
@@ -192,7 +331,11 @@ func (o *Orchestrator) determineS2O(exec *domain.Execution) action {
 
 func (o *Orchestrator) determineO2S(exec *domain.Execution) action {
 	switch exec.CurrentState {
+	case domain.StateAwaitingTargetNode:
+		return actionNone
 	case domain.StateRequested:
+		return actionAcquireLease
+	case domain.StateNodeIdentified:
 		return actionAcquireLease
 	case domain.StateLocked:
 		return actionPrecheck
@@ -518,6 +661,7 @@ func classifyFailure(state domain.SwitchState) domain.FailureClass {
 		return domain.FailureUnknownAfterReboot
 	case domain.StateRequested,
 		domain.StateAwaitingSourceAllocation,
+		domain.StateAwaitingTargetNode,
 		domain.StateNodeIdentified,
 		domain.StateLocked,
 		domain.StatePrecheckPassed,

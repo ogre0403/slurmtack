@@ -83,9 +83,6 @@ func main() {
 	}
 	defer sqlStore.Close()
 
-	svc := service.NewSwitchService(sqlStore, baseLogger)
-	srv := api.NewServer(cfg.ListenAddr, cfg.APIToken, sqlStore, svc)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -128,6 +125,18 @@ func main() {
 		SSHPollInterval: cfg.SSHPollInterval,
 		SSHPollTimeout:  cfg.SSHPollTimeout,
 	}, baseLogger)
+
+	// Start MQ consumer supervision.
+	mqConn := startMQ(ctx, &wg, cfg.AMQPURL, sqlStore, baseLogger, defaultMQStartupDeps.withIntakeHandler(orch))
+
+	var requestedPublisher service.RequestedEventPublisher
+	if amqpConn, ok := mqConn.(*mq.Connection); ok {
+		requestedPublisher = mq.NewPublisher(amqpConn, baseLogger)
+	}
+
+	svc := service.NewSwitchService(sqlStore, baseLogger, requestedPublisher)
+	srv := api.NewServer(cfg.ListenAddr, cfg.APIToken, sqlStore, svc)
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -135,9 +144,6 @@ func main() {
 		orch.Run(ctx)
 		baseLogger.Info("orchestrator.stopped")
 	}()
-
-	// Start MQ consumer supervision.
-	mqConn := startMQ(ctx, &wg, cfg.AMQPURL, sqlStore, baseLogger, defaultMQStartupDeps)
 
 	// Start HTTP server
 	go func() {
@@ -261,6 +267,18 @@ func (d mqStartupDeps) withDefaults() mqStartupDeps {
 	}
 	if d.newConsumer == nil {
 		d.newConsumer = defaultMQStartupDeps.newConsumer
+	}
+	return d
+}
+
+func (d mqStartupDeps) withIntakeHandler(handler mq.IntakeHandler) mqStartupDeps {
+	d = d.withDefaults()
+	d.newConsumer = func(conn mqConnection, s store.Store, logger *slog.Logger) mqConsumer {
+		amqpConn, ok := conn.(*mq.Connection)
+		if !ok {
+			return mqErrorConsumer{err: fmt.Errorf("unexpected mq connection type %T", conn)}
+		}
+		return mq.NewConsumer(amqpConn, s, logger, handler)
 	}
 	return d
 }

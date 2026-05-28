@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -21,13 +22,24 @@ type SwitchRequest struct {
 	SlurmPartition  string
 }
 
-type SwitchService struct {
-	store  store.Store
-	logger *slog.Logger
+var ErrInvalidSwitchRequest = errors.New("invalid switch request")
+
+type RequestedEventPublisher interface {
+	PublishRequested(ctx context.Context, executionID string, direction domain.SwitchDirection) error
 }
 
-func NewSwitchService(s store.Store, logger *slog.Logger) *SwitchService {
-	return &SwitchService{store: s, logger: trace.OrDefault(logger)}
+type SwitchService struct {
+	store              store.Store
+	requestedPublisher RequestedEventPublisher
+	logger             *slog.Logger
+}
+
+func NewSwitchService(s store.Store, logger *slog.Logger, requestedPublishers ...RequestedEventPublisher) *SwitchService {
+	var requestedPublisher RequestedEventPublisher
+	if len(requestedPublishers) > 0 {
+		requestedPublisher = requestedPublishers[0]
+	}
+	return &SwitchService{store: s, requestedPublisher: requestedPublisher, logger: trace.OrDefault(logger)}
 }
 
 func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (string, error) {
@@ -37,25 +49,32 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 	}
 
 	var desired, previous domain.Owner
+	currentState := domain.StateRequested
+	nodeName := req.NodeName
 	switch req.Direction {
 	case domain.DirectionSlurmToOpenStack:
 		desired = domain.OwnerOpenStack
 		previous = domain.OwnerSlurm
 	case domain.DirectionOpenStackToSlurm:
+		if req.NodeName != "" {
+			return "", fmt.Errorf("%w: node_name must be delivered through MQ node selection", ErrInvalidSwitchRequest)
+		}
 		desired = domain.OwnerSlurm
 		previous = domain.OwnerOpenStack
+		currentState = domain.StateAwaitingTargetNode
+		nodeName = ""
 	default:
-		return "", fmt.Errorf("invalid direction: %s", req.Direction)
+		return "", fmt.Errorf("%w: invalid direction: %s", ErrInvalidSwitchRequest, req.Direction)
 	}
 
 	now := time.Now()
 	exec := &domain.Execution{
 		ID:                       id,
-		NodeName:                 req.NodeName,
+		NodeName:                 nodeName,
 		Direction:                req.Direction,
 		RequestedBy:              req.RequestedBy,
 		RequestedAt:              now,
-		CurrentState:             domain.StateRequested,
+		CurrentState:             currentState,
 		DesiredOwner:             desired,
 		PreviousOwner:            previous,
 		StateVersion:             0,
@@ -67,10 +86,15 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 	if err := s.store.CreateExecution(ctx, exec); err != nil {
 		return "", fmt.Errorf("creating execution: %w", err)
 	}
+	if s.requestedPublisher != nil {
+		if err := s.requestedPublisher.PublishRequested(ctx, id, req.Direction); err != nil {
+			s.logger.Warn("request.requested_publish_failed", "execution_id", id, "direction", string(req.Direction), "error", err.Error())
+		}
+	}
 
 	s.logger.Info(trace.EventRequestAccepted,
 		"execution_id", id,
-		"node_name", req.NodeName,
+		"node_name", nodeName,
 		"direction", string(req.Direction),
 		"requested_by", req.RequestedBy,
 	)

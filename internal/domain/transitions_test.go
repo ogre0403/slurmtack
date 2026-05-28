@@ -9,12 +9,15 @@ func TestValidTransitions(t *testing.T) {
 		valid bool
 	}{
 		{StateRequested, StateAwaitingSourceAllocation, true},
+		{StateRequested, StateAwaitingTargetNode, true},
 		{StateRequested, StateNodeIdentified, true},
 		{StateRequested, StateLocked, true},
 		{StateRequested, StateFailedNonDestructive, true},
 		{StateRequested, StateCompleted, false},
 		{StateAwaitingSourceAllocation, StateNodeIdentified, true},
 		{StateAwaitingSourceAllocation, StateCompleted, false},
+		{StateAwaitingTargetNode, StateNodeIdentified, true},
+		{StateAwaitingTargetNode, StateLocked, false},
 		{StateNodeIdentified, StateLocked, true},
 		{StateNodeIdentified, StateSourceDetached, false},
 		{StateLocked, StatePrecheckPassed, true},
@@ -56,6 +59,7 @@ func TestTerminalStates(t *testing.T) {
 	nonTerminals := []SwitchState{
 		StateRequested,
 		StateAwaitingSourceAllocation,
+		StateAwaitingTargetNode,
 		StateLocked,
 		StateRebooting,
 		StateCompensating,

@@ -144,12 +144,26 @@ func TestOpenStackToSlurmFullFlow(t *testing.T) {
 	svc := service.NewSwitchService(s, nil)
 
 	execID, err := svc.RequestSwitch(ctx, service.SwitchRequest{
-		NodeName:    "gpu-02",
 		Direction:   domain.DirectionOpenStackToSlurm,
 		RequestedBy: "test-operator",
 	})
 	if err != nil {
 		t.Fatalf("request switch: %v", err)
+	}
+
+	exec, err := s.GetExecution(ctx, execID)
+	if err != nil {
+		t.Fatalf("get execution: %v", err)
+	}
+	if exec.CurrentState != domain.StateAwaitingTargetNode {
+		t.Fatalf("expected awaiting_target_node, got %s", exec.CurrentState)
+	}
+	exec.NodeName = "gpu-02"
+	if err := s.UpdateExecution(ctx, exec); err != nil {
+		t.Fatalf("bind node from MQ: %v", err)
+	}
+	if err := runner.Transition(ctx, execID, domain.StateNodeIdentified); err != nil {
+		t.Fatalf("transition to node_identified: %v", err)
 	}
 
 	if err := runner.Transition(ctx, execID, domain.StateLocked); err != nil {
@@ -212,7 +226,7 @@ func TestOpenStackToSlurmFullFlow(t *testing.T) {
 		t.Fatalf("transition to completed: %v", err)
 	}
 
-	exec, _ := s.GetExecution(ctx, execID)
+	exec, _ = s.GetExecution(ctx, execID)
 	if exec.OverallStatus != domain.OverallStatusSucceeded {
 		t.Fatalf("expected succeeded, got %s", exec.OverallStatus)
 	}
@@ -230,16 +244,32 @@ func TestOpenStackToSlurmPrecheckBlocksWithInstances(t *testing.T) {
 	}
 
 	svc := service.NewSwitchService(s, nil)
-	execID, _ := svc.RequestSwitch(ctx, service.SwitchRequest{
-		NodeName:    "gpu-03",
+	execID, err := svc.RequestSwitch(ctx, service.SwitchRequest{
 		Direction:   domain.DirectionOpenStackToSlurm,
 		RequestedBy: "test-operator",
 	})
+	if err != nil {
+		t.Fatalf("request switch: %v", err)
+	}
 
-	runner.Transition(ctx, execID, domain.StateLocked)
+	exec, err := s.GetExecution(ctx, execID)
+	if err != nil {
+		t.Fatalf("get execution: %v", err)
+	}
+	exec.NodeName = "gpu-03"
+	if err := s.UpdateExecution(ctx, exec); err != nil {
+		t.Fatalf("bind node from MQ: %v", err)
+	}
+	if err := runner.Transition(ctx, execID, domain.StateNodeIdentified); err != nil {
+		t.Fatalf("transition to node_identified: %v", err)
+	}
+
+	if err := runner.Transition(ctx, execID, domain.StateLocked); err != nil {
+		t.Fatalf("transition to locked: %v", err)
+	}
 
 	precheck := openstack.NewPrecheckHandler(osClient)
-	err := runner.RunStep(ctx, execID, precheck)
+	err = runner.RunStep(ctx, execID, precheck)
 	if err == nil {
 		t.Fatal("precheck should fail when instances exist")
 	}

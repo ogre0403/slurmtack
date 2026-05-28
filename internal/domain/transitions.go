@@ -1,8 +1,9 @@
 package domain
 
 var allowedTransitions = map[SwitchState][]SwitchState{
-	StateRequested:                {StateAwaitingSourceAllocation, StateNodeIdentified, StateLocked, StateFailedNonDestructive},
+	StateRequested:                {StateAwaitingSourceAllocation, StateAwaitingTargetNode, StateNodeIdentified, StateLocked, StateFailedNonDestructive},
 	StateAwaitingSourceAllocation: {StateNodeIdentified, StateFailedNonDestructive},
+	StateAwaitingTargetNode:       {StateNodeIdentified, StateFailedNonDestructive},
 	StateNodeIdentified:           {StateLocked, StateFailedNonDestructive},
 	StateLocked:                   {StatePrecheckPassed, StateFailedNonDestructive},
 	StatePrecheckPassed:           {StateSourceQuiescing, StateFailedNonDestructive},

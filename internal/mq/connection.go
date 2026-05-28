@@ -2,6 +2,7 @@ package mq
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math"
 	"sync"
@@ -142,4 +143,22 @@ func (c *Connection) NotifyClose() chan *amqp.Error {
 		return ch
 	}
 	return c.conn.NotifyClose(make(chan *amqp.Error, 1))
+}
+
+func (c *Connection) Publish(ctx context.Context, exchange, routingKey string, publishing amqp.Publishing) error {
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+
+	if conn == nil {
+		return errors.New("no connection available")
+	}
+
+	ch, err := conn.Channel()
+	if err != nil {
+		return err
+	}
+	defer ch.Close()
+
+	return ch.PublishWithContext(ctx, exchange, routingKey, false, false, publishing)
 }

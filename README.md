@@ -4,8 +4,8 @@ slurmtack 是一個用來協調 GPU 節點在 Slurm 與 OpenStack 間切換的 d
 
 - HTTP API
 - SQLite state store
-- 背景 orchestrator
-- 可選的 RabbitMQ consumer
+- MQ-driven orchestrator worker
+- RabbitMQ publisher / consumer（`openstack_to_slurm` admission 需要）
 
 ## Quick Start
 
@@ -83,7 +83,6 @@ curl -X POST http://127.0.0.1:8080/v1/switches \
 	-H 'Content-Type: application/json' \
 	-d '{
 		"direction": "openstack_to_slurm",
-		"node_name": "gpu-01",
 		"requested_by": "local-dev"
 	}'
 ```
@@ -96,6 +95,8 @@ curl -X POST http://127.0.0.1:8080/v1/switches \
 	"status_url": "/v1/switches/<execution-id>"
 }
 ```
+
+對 `openstack_to_slurm` 而言，這一筆 execution 會先以 `awaiting_target_node` 建立，`node_name` 會是空字串。這代表 request 已被接受，但 daemon 還不會 acquire lease、做 precheck，或開始任何 host-level mutation；它會先等 MQ 的節點綁定事件。
 
 ### 3. 查詢 execution 狀態
 
@@ -110,6 +111,34 @@ curl http://127.0.0.1:8080/v1/switches/<execution-id> \
 curl http://127.0.0.1:8080/v1/switches \
 	-H 'Authorization: Bearer dev-token'
 ```
+
+### 4. 讓 `openstack_to_slurm` 繼續執行
+
+建立 request 後，daemon 會自動往 `gpu-switch.events` 發送 routing key `execution.requested`，payload 內容如下:
+
+```json
+{
+	"execution_id": "<execution-id>",
+	"direction": "openstack_to_slurm"
+}
+```
+
+`awaiting_target_node` 的意思是: execution 已經被持久化，也已經進入 MQ admission path，但還沒有綁定實際要切換的 GPU node。只要還停在這個 state，daemon 就不會 acquire lease，也不會做 OpenStack/SSH/Slurm 動作。
+
+要讓這條流程往下走，外部選點元件必須再對同一個 exchange 發送 `execution.node_selected`:
+
+```bash
+rabbitmqadmin publish \
+	exchange=gpu-switch.events \
+	routing_key=execution.node_selected \
+	payload='{"execution_id":"<execution-id>","node_name":"gpu-01"}'
+```
+
+收到後，daemon 會:
+
+- 把 `node_name` 綁到 execution
+- 將 state 從 `awaiting_target_node` 推進到 `node_identified`
+- 以 MQ-driven worker 繼續既有的 lease / precheck / quiesce / reboot / attach / verify 流程
 
 ## 可選環境變數
 
@@ -134,6 +163,23 @@ curl http://127.0.0.1:8080/v1/switches \
 - `PLACEHOLDER_SIF_PATH`
 
 若 `SSH_PRIVATE_KEY_PATH` 缺少、路徑不存在，或 daemon 無法讀取該檔案，程式會在 startup 階段直接退出，並回報明確的 `SSH_PRIVATE_KEY_PATH` 驗證錯誤，而不是等到 workflow 跑到 reboot/ssh poll 時才失敗。
+
+## RabbitMQ + OpenStack-to-Slurm 啟動摘要
+
+`openstack_to_slurm` 現在走 MQ-driven admission，操作上請直接記住這幾點:
+
+- API request body 只需要 `direction=openstack_to_slurm` 與 `requested_by`，不可再送 `node_name`
+- API 持久化 execution 後，會自動發 `execution.requested`
+- execution 會先停在 `awaiting_target_node`
+- `awaiting_target_node` = request 已接受，但 daemon 還在等外部節點選擇事件；此時不會碰 lease、不會碰 host
+- 外部元件必須再發 `execution.node_selected`
+- `execution.node_selected` 一到，daemon 會綁定節點、轉到 `node_identified`，然後繼續下游 workflow
+
+如果你在操作環境裡看見 execution 長時間停在 `awaiting_target_node`，第一個要檢查的是:
+
+- daemon 是否有 `AMQP_URL`
+- `gpu-switch.events` / `execution.node_selected` 是否真的送到 broker
+- payload 裡的 `execution_id` 是否對到正確 execution
 
 ## RabbitMQ + placeholder agent: Slurm-to-OpenStack 流程
 
@@ -190,8 +236,17 @@ make up
 當 `AMQP_URL` 有設定時，daemon 啟動時會自動宣告 MQ topology:
 
 - exchange: `gpu-switch.events`
+- queue: `gpu-switch.requested`
+- queue: `gpu-switch.node-selected`
 - queue: `gpu-switch.allocation`
 - queue: `gpu-switch.drained`
+
+對目前的 admission path 來說，四種 routing key 的角色分別是:
+
+- `execution.requested`: API 建立 execution 後發出，讓 daemon admission 新工作
+- `execution.node_selected`: 外部選點元件把 `openstack_to_slurm` 綁到具體節點
+- `execution.allocation`: placeholder agent 回報 `slurm_to_openstack` 分配結果
+- `execution.drained`: placeholder agent 回報 Slurm source node 已 drain 完成
 
 ### 3. 建立 `slurm_to_openstack` execution
 

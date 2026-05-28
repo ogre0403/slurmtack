@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -26,11 +27,6 @@ func (h *SwitchHandler) Create(c *gin.Context) {
 	}
 
 	dir := domain.SwitchDirection(req.Direction)
-	if dir != domain.DirectionSlurmToOpenStack && dir != domain.DirectionOpenStackToSlurm {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid direction: must be slurm_to_openstack or openstack_to_slurm"})
-		return
-	}
-
 	id, err := h.svc.RequestSwitch(c.Request.Context(), service.SwitchRequest{
 		NodeName:        req.NodeName,
 		Direction:       dir,
@@ -39,6 +35,10 @@ func (h *SwitchHandler) Create(c *gin.Context) {
 		SlurmPartition:  req.SlurmPartition,
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidSwitchRequest) {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}

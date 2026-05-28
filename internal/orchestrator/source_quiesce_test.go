@@ -201,3 +201,23 @@ func TestProcessExecutionFailsO2SWhenSourceQuiesceCheckErrors(t *testing.T) {
 		t.Fatalf("execution.failed terminal_state = %q, want %q", execFailed.Attrs["terminal_state"], domain.StateFailedNonDestructive)
 	}
 }
+
+func TestRunRecoversO2SSourceQuiescingExecution(t *testing.T) {
+	logger, captured := newCaptureLogger()
+	client := &fakeOpenStackClient{
+		computeService: &openstack.ComputeServiceStatus{Host: "gpu-node-01", Status: "disabled", State: "up", Enabled: false},
+	}
+	orch, _, _ := newSourceQuiesceOrchestrator(t, client, logger)
+
+	runCtx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	orch.Run(runCtx)
+
+	selected := captured.find(trace.EventActionSelected)
+	if selected == nil {
+		t.Fatal("expected action.selected log")
+	}
+	if selected.Attrs["action"] != "verify_source_quiesce" {
+		t.Fatalf("action.selected action = %q, want %q", selected.Attrs["action"], "verify_source_quiesce")
+	}
+}

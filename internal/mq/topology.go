@@ -1,12 +1,16 @@
 package mq
 
 const (
-	ExchangeName        = "gpu-switch.events"
-	AllocationQueueName = "gpu-switch.allocation"
-	DrainedQueueName    = "gpu-switch.drained"
+	ExchangeName          = "gpu-switch.events"
+	RequestedQueueName    = "gpu-switch.requested"
+	NodeSelectedQueueName = "gpu-switch.node-selected"
+	AllocationQueueName   = "gpu-switch.allocation"
+	DrainedQueueName      = "gpu-switch.drained"
 
-	AllocationRoutingKey = "execution.allocation"
-	DrainedRoutingKey    = "execution.drained"
+	RequestedRoutingKey    = "execution.requested"
+	NodeSelectedRoutingKey = "execution.node_selected"
+	AllocationRoutingKey   = "execution.allocation"
+	DrainedRoutingKey      = "execution.drained"
 )
 
 func DeclareTopology(c *Connection) error {
@@ -18,6 +22,30 @@ func DeclareTopology(c *Connection) error {
 		true,  // durable
 		false, // auto-delete
 		false, // internal
+		false, // no-wait
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	_, err = ch.QueueDeclare(
+		RequestedQueueName,
+		true,  // durable
+		false, // auto-delete
+		false, // exclusive
+		false, // no-wait
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	_, err = ch.QueueDeclare(
+		NodeSelectedQueueName,
+		true,  // durable
+		false, // auto-delete
+		false, // exclusive
 		false, // no-wait
 		nil,
 	)
@@ -45,6 +73,16 @@ func DeclareTopology(c *Connection) error {
 		false, // no-wait
 		nil,
 	)
+	if err != nil {
+		return err
+	}
+
+	err = ch.QueueBind(RequestedQueueName, RequestedRoutingKey, ExchangeName, false, nil)
+	if err != nil {
+		return err
+	}
+
+	err = ch.QueueBind(NodeSelectedQueueName, NodeSelectedRoutingKey, ExchangeName, false, nil)
 	if err != nil {
 		return err
 	}

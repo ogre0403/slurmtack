@@ -113,6 +113,57 @@ func TestCreateSwitchWithSlurmPartition(t *testing.T) {
 	}
 }
 
+func TestCreateOpenStackToSlurmStartsAwaitingTargetNode(t *testing.T) {
+	srv := setupTestServer(t)
+
+	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1"}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var createResp SwitchResponse
+	json.Unmarshal(w.Body.Bytes(), &createResp)
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/v1/switches/"+createResp.ExecutionID, nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var status ExecutionStatus
+	json.Unmarshal(w.Body.Bytes(), &status)
+	if status.CurrentState != "awaiting_target_node" {
+		t.Fatalf("CurrentState = %q, want awaiting_target_node", status.CurrentState)
+	}
+	if status.NodeName != "" {
+		t.Fatalf("NodeName = %q, want empty string", status.NodeName)
+	}
+}
+
+func TestCreateOpenStackToSlurmRejectsNodeName(t *testing.T) {
+	srv := setupTestServer(t)
+
+	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1","node_name":"gpu-01"}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestCreateSwitchInvalidDirection(t *testing.T) {
 	srv := setupTestServer(t)
 

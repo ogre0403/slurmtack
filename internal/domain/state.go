@@ -5,6 +5,7 @@ type SwitchState string
 const (
 	StateRequested                SwitchState = "requested"
 	StateAwaitingSourceAllocation SwitchState = "awaiting_source_allocation"
+	StateAwaitingTargetNode       SwitchState = "awaiting_target_node"
 	StateNodeIdentified           SwitchState = "node_identified"
 	StateLocked                   SwitchState = "locked"
 	StatePrecheckPassed           SwitchState = "precheck_passed"

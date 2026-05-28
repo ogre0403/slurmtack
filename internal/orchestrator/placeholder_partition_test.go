@@ -86,6 +86,48 @@ func TestOrchestratorSubmitPlaceholderLeavesPartitionEmptyWhenOmitted(t *testing
 	}
 }
 
+func TestOrchestratorRunDoesNotAutoDiscoverRequestedExecutions(t *testing.T) {
+	fakeSlurm := &capturePlaceholderSlurmClient{}
+	exec := &domain.Execution{
+		ID:            "exec-no-auto-discovery",
+		Direction:     domain.DirectionSlurmToOpenStack,
+		RequestedBy:   "operator",
+		RequestedAt:   time.Now(),
+		CurrentState:  domain.StateRequested,
+		DesiredOwner:  domain.OwnerOpenStack,
+		PreviousOwner: domain.OwnerSlurm,
+		OverallStatus: domain.OverallStatusActive,
+	}
+
+	s := store.NewMemoryStore()
+	ctx := context.Background()
+	if err := s.CreateExecution(ctx, exec); err != nil {
+		t.Fatalf("CreateExecution() error = %v", err)
+	}
+
+	runner := engine.NewRunner(s, nil)
+	orch := orchestrator.New(s, runner, nil, fakeSlurm, nil, orchestrator.Config{
+		TickInterval:    10 * time.Millisecond,
+		SSHPollInterval: time.Second,
+		SSHPollTimeout:  5 * time.Second,
+	}, nil)
+
+	runCtx, cancel := context.WithTimeout(ctx, 60*time.Millisecond)
+	defer cancel()
+	orch.Run(runCtx)
+
+	updated, err := s.GetExecution(ctx, exec.ID)
+	if err != nil {
+		t.Fatalf("GetExecution() error = %v", err)
+	}
+	if updated.CurrentState != domain.StateRequested {
+		t.Fatalf("CurrentState = %s, want %s", updated.CurrentState, domain.StateRequested)
+	}
+	if len(fakeSlurm.submitRequests) != 0 {
+		t.Fatalf("submitRequests = %d, want 0 without explicit admission", len(fakeSlurm.submitRequests))
+	}
+}
+
 func runOrchestratorPlaceholderSubmission(t *testing.T, exec *domain.Execution, fakeSlurm *capturePlaceholderSlurmClient) {
 	t.Helper()
 
@@ -102,9 +144,21 @@ func runOrchestratorPlaceholderSubmission(t *testing.T, exec *domain.Execution, 
 		SSHPollTimeout:  5 * time.Second,
 	}, nil)
 
-	tickCtx, cancel := context.WithTimeout(ctx, 60*time.Millisecond)
+	tickCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
-	orch.Run(tickCtx)
+	orch.AdmitExecution(tickCtx, exec.ID)
+
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		updated, err := s.GetExecution(ctx, exec.ID)
+		if err != nil {
+			t.Fatalf("GetExecution() error = %v", err)
+		}
+		if updated.CurrentState == domain.StateAwaitingSourceAllocation {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	updated, err := s.GetExecution(ctx, exec.ID)
 	if err != nil {
