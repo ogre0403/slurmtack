@@ -2,7 +2,7 @@ package engine
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"testing"
 
@@ -17,7 +17,7 @@ func TestDryRunSlurmToOpenStack(t *testing.T) {
 	r := NewRunner(s, nil)
 	tmpDir := t.TempDir()
 	ew := evidence.NewWriter(tmpDir)
-	logger := log.New(os.Stderr, "", 0)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	dr := NewDryRunner(s, r, ew, logger)
 	execID, err := dr.Execute(ctx, DryRunConfig{
@@ -49,7 +49,7 @@ func TestDryRunOpenStackToSlurm(t *testing.T) {
 	r := NewRunner(s, nil)
 	tmpDir := t.TempDir()
 	ew := evidence.NewWriter(tmpDir)
-	logger := log.New(os.Stderr, "", 0)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	dr := NewDryRunner(s, r, ew, logger)
 	execID, err := dr.Execute(ctx, DryRunConfig{

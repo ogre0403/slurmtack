@@ -3,7 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/slurmtack/slurmtack/internal/domain"
@@ -21,10 +21,13 @@ type DryRunner struct {
 	store    store.Store
 	runner   *Runner
 	evidence *evidence.Writer
-	logger   *log.Logger
+	logger   *slog.Logger
 }
 
-func NewDryRunner(s store.Store, r *Runner, ew *evidence.Writer, logger *log.Logger) *DryRunner {
+func NewDryRunner(s store.Store, r *Runner, ew *evidence.Writer, logger *slog.Logger) *DryRunner {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &DryRunner{store: s, runner: r, evidence: ew, logger: logger}
 }
 
@@ -57,13 +60,13 @@ func (d *DryRunner) Execute(ctx context.Context, cfg DryRunConfig) (string, erro
 	d.store.UpdateExecution(ctx, exec)
 
 	if err := d.evidence.InitExecution(exec); err != nil {
-		d.logger.Printf("warning: could not init evidence dir: %v", err)
+		d.logger.Warn("dry_run.evidence_init_failed", "error", err)
 	}
 
 	transitions := d.transitionsForDirection(cfg.Direction)
 
 	for _, state := range transitions {
-		d.logger.Printf("[dry-run] %s -> %s", exec.CurrentState, state)
+		d.logger.Info("dry_run.transition", "from_state", exec.CurrentState, "to_state", state)
 
 		d.evidence.AppendEvent(cfg.NodeName, exec.ID, map[string]any{
 			"type":       "dry_run_transition",
@@ -72,7 +75,7 @@ func (d *DryRunner) Execute(ctx context.Context, cfg DryRunConfig) (string, erro
 		})
 
 		if err := d.runner.Transition(ctx, exec.ID, state); err != nil {
-			d.logger.Printf("[dry-run] transition to %s failed: %v", state, err)
+			d.logger.Error("dry_run.transition_failed", "to_state", state, "error", err)
 			return exec.ID, fmt.Errorf("dry-run transition to %s: %w", state, err)
 		}
 
@@ -80,7 +83,7 @@ func (d *DryRunner) Execute(ctx context.Context, cfg DryRunConfig) (string, erro
 	}
 
 	d.evidence.WriteManifestUpdate(exec)
-	d.logger.Printf("[dry-run] completed execution %s for node %s", exec.ID, cfg.NodeName)
+	d.logger.Info("dry_run.completed", "execution_id", exec.ID, "node_name", cfg.NodeName)
 
 	return exec.ID, nil
 }

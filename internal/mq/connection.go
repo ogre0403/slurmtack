@@ -2,7 +2,7 @@ package mq
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"math"
 	"sync"
 	"time"
@@ -11,14 +11,18 @@ import (
 )
 
 type Connection struct {
-	url  string
-	conn *amqp.Connection
-	ch   *amqp.Channel
-	mu   sync.Mutex
+	url    string
+	conn   *amqp.Connection
+	ch     *amqp.Channel
+	logger *slog.Logger
+	mu     sync.Mutex
 }
 
-func NewConnection(url string) *Connection {
-	return &Connection{url: url}
+func NewConnection(url string, logger *slog.Logger) *Connection {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Connection{url: url, logger: logger}
 }
 
 func (c *Connection) Connect(ctx context.Context) error {
@@ -65,7 +69,7 @@ func (c *Connection) Reconnect(ctx context.Context) error {
 		if err := c.connectLocked(ctx); err != nil {
 			attempt++
 			backoff := time.Duration(math.Min(float64(time.Second)*math.Pow(2, float64(attempt)), float64(30*time.Second)))
-			log.Printf("mq: reconnect attempt %d failed: %v, retrying in %v", attempt, err, backoff)
+			c.logger.Warn("mq.reconnect_attempt_failed", "attempt", attempt, "error", err, "retry_in", backoff)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -73,7 +77,7 @@ func (c *Connection) Reconnect(ctx context.Context) error {
 			}
 			continue
 		}
-		log.Printf("mq: reconnected after %d attempts", attempt)
+		c.logger.Info("mq.reconnected", "attempts", attempt)
 		return nil
 	}
 }

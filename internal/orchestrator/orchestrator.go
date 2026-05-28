@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"log"
 	"log/slog"
 	"time"
 
@@ -61,7 +60,7 @@ func (o *Orchestrator) Run(ctx context.Context) {
 func (o *Orchestrator) tick(ctx context.Context) {
 	executions, err := o.store.ListActiveExecutions(ctx)
 	if err != nil {
-		log.Printf("orchestrator: failed to list active executions: %v", err)
+		o.logger.Error("orchestrator.list_active_executions_failed", "error", err)
 		return
 	}
 

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -24,15 +23,17 @@ import (
 )
 
 func main() {
+	baseLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(baseLogger)
+
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		exitWithError(baseLogger, "config.load_failed", err)
 	}
 
-	baseLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	sqlStore, err := store.NewSQLiteStore(cfg.DBPath)
 	if err != nil {
-		log.Fatalf("store: %v", err)
+		exitWithError(baseLogger, "store.init_failed", err)
 	}
 	defer sqlStore.Close()
 
@@ -69,7 +70,7 @@ func main() {
 		var err error
 		osClient, err = openstack.NewGophecloudClient(ctx, opts)
 		if err != nil {
-			log.Fatalf("openstack client: %v", err)
+			exitWithError(baseLogger, "openstack.client_init_failed", err)
 		}
 	}
 
@@ -84,40 +85,40 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		log.Println("orchestrator: started")
+		baseLogger.Info("orchestrator.started")
 		orch.Run(ctx)
-		log.Println("orchestrator: stopped")
+		baseLogger.Info("orchestrator.stopped")
 	}()
 
 	// Start MQ consumer if AMQP_URL is configured
 	var mqConn *mq.Connection
 	if cfg.AMQPURL != "" {
-		mqConn = mq.NewConnection(cfg.AMQPURL)
+		mqConn = mq.NewConnection(cfg.AMQPURL, baseLogger)
 		if err := mqConn.Connect(ctx); err != nil {
-			log.Printf("mq: failed to connect: %v (continuing without MQ)", err)
+			baseLogger.Warn("mq.connect_failed", "error", err, "continuing_without_mq", true)
 			mqConn = nil
 		} else {
 			if err := mq.DeclareTopology(mqConn); err != nil {
-				log.Fatalf("mq: topology declaration failed: %v", err)
+				exitWithError(baseLogger, "mq.topology_declaration_failed", err)
 			}
 			consumer := mq.NewConsumer(mqConn, sqlStore, baseLogger)
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				log.Println("mq: consumer started")
+				baseLogger.Info("mq.consumer.started")
 				if err := consumer.Run(ctx); err != nil {
-					log.Printf("mq: consumer exited: %v", err)
+					baseLogger.Warn("mq.consumer.exited", "error", err)
 				}
-				log.Println("mq: consumer stopped")
+				baseLogger.Info("mq.consumer.stopped")
 			}()
 		}
 	}
 
 	// Start HTTP server
 	go func() {
-		log.Printf("listening on %s", cfg.ListenAddr)
+		baseLogger.Info("server.listening", "address", cfg.ListenAddr)
 		if err := srv.Start(); err != nil {
-			log.Fatalf("server: %v", err)
+			exitWithError(baseLogger, "server.start_failed", err)
 		}
 	}()
 
@@ -125,10 +126,10 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	<-sigCh
 
-	log.Println("shutting down...")
+	baseLogger.Info("shutdown.started")
 
 	if err := srv.Shutdown(); err != nil {
-		log.Printf("server shutdown error: %v", err)
+		baseLogger.Warn("server.shutdown_failed", "error", err)
 	}
 
 	cancel()
@@ -146,7 +147,7 @@ func main() {
 	select {
 	case <-done:
 	case <-time.After(30 * time.Second):
-		log.Println("shutdown timed out waiting for goroutines")
+		baseLogger.Warn("shutdown.timeout_waiting_for_goroutines", "timeout", 30*time.Second)
 	}
 }
 
@@ -166,4 +167,9 @@ func buildSSHExecutorConfig(cfg *config.Config) remote.SSHExecutorConfig {
 		Options:      strings.Fields(cfg.SSHOptions),
 		IdentityFile: cfg.SSHPrivateKeyPath,
 	}
+}
+
+func exitWithError(logger *slog.Logger, msg string, err error) {
+	logger.Error(msg, "error", err)
+	os.Exit(1)
 }
