@@ -11,15 +11,16 @@ import (
 	fake "github.com/gophercloud/gophercloud/v2/testhelper/client"
 )
 
-func setupClient() *gophecloudClient {
-	return &gophecloudClient{compute: fake.ServiceClient()}
+func setupClient() (*gophecloudClient, th.FakeServer) {
+	fakeServer := th.SetupHTTP()
+	return &gophecloudClient{compute: fake.ServiceClient(fakeServer)}, fakeServer
 }
 
 func TestListInstances(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, "GET")
 		th.TestFormValues(t, r, map[string]string{"host": "gpu-node-01"})
 		w.Header().Set("Content-Type", "application/json")
@@ -31,7 +32,6 @@ func TestListInstances(t *testing.T) {
 		}`)
 	})
 
-	client := setupClient()
 	instances, err := client.ListInstances(context.Background(), "gpu-node-01")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -48,15 +48,14 @@ func TestListInstances(t *testing.T) {
 }
 
 func TestListInstancesEmpty(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"servers": []}`)
 	})
 
-	client := setupClient()
 	instances, err := client.ListInstances(context.Background(), "empty-host")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -67,10 +66,10 @@ func TestListInstancesEmpty(t *testing.T) {
 }
 
 func TestListActiveMigrations(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-migrations", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-migrations", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, "GET")
 		if r.URL.Query().Get("host") != "gpu-node-01" {
 			t.Errorf("expected host=gpu-node-01, got %s", r.URL.Query().Get("host"))
@@ -82,7 +81,6 @@ func TestListActiveMigrations(t *testing.T) {
 		fmt.Fprint(w, `{"migrations": [{"id": 101}, {"id": 202}]}`)
 	})
 
-	client := setupClient()
 	ids, err := client.ListActiveMigrations(context.Background(), "gpu-node-01")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -96,14 +94,13 @@ func TestListActiveMigrations(t *testing.T) {
 }
 
 func TestListActiveMigrations404(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-migrations", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-migrations", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
 
-	client := setupClient()
 	ids, err := client.ListActiveMigrations(context.Background(), "gpu-node-01")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -114,10 +111,10 @@ func TestListActiveMigrations404(t *testing.T) {
 }
 
 func TestGetComputeService(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, "GET")
 		th.TestFormValues(t, r, map[string]string{
 			"host":   "gpu-node-01",
@@ -131,7 +128,6 @@ func TestGetComputeService(t *testing.T) {
 		}`)
 	})
 
-	client := setupClient()
 	svc, err := client.GetComputeService(context.Background(), "gpu-node-01")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -148,15 +144,14 @@ func TestGetComputeService(t *testing.T) {
 }
 
 func TestGetComputeServiceNotFound(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"services": []}`)
 	})
 
-	client := setupClient()
 	_, err := client.GetComputeService(context.Background(), "missing-host")
 	if err == nil {
 		t.Fatal("expected error for missing service")
@@ -167,20 +162,19 @@ func TestGetComputeServiceNotFound(t *testing.T) {
 }
 
 func TestDisableComputeService(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"services": [{"id": 42, "host": "gpu-node-01", "binary": "nova-compute", "status": "enabled", "state": "up"}]}`)
 	})
-	th.Mux.HandleFunc("/os-services/42", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services/42", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, "PUT")
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"service": {"id": 42, "host": "gpu-node-01", "binary": "nova-compute", "status": "disabled", "state": "up"}}`)
 	})
 
-	client := setupClient()
 	err := client.DisableComputeService(context.Background(), "gpu-node-01", "maintenance")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -188,19 +182,18 @@ func TestDisableComputeService(t *testing.T) {
 }
 
 func TestDisableComputeServiceAlreadyDisabled(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"services": [{"id": 42, "host": "gpu-node-01", "binary": "nova-compute", "status": "disabled", "state": "up"}]}`)
 	})
-	th.Mux.HandleFunc("/os-services/42", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services/42", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"service": {"id": 42, "host": "gpu-node-01", "binary": "nova-compute", "status": "disabled", "state": "up"}}`)
 	})
 
-	client := setupClient()
 	err := client.DisableComputeService(context.Background(), "gpu-node-01", "maintenance")
 	if err != nil {
 		t.Fatalf("expected nil error for idempotent disable, got: %v", err)
@@ -208,20 +201,19 @@ func TestDisableComputeServiceAlreadyDisabled(t *testing.T) {
 }
 
 func TestEnableComputeService(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"services": [{"id": 42, "host": "gpu-node-01", "binary": "nova-compute", "status": "disabled", "state": "up"}]}`)
 	})
-	th.Mux.HandleFunc("/os-services/42", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services/42", func(w http.ResponseWriter, r *http.Request) {
 		th.TestMethod(t, r, "PUT")
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"service": {"id": 42, "host": "gpu-node-01", "binary": "nova-compute", "status": "enabled", "state": "up"}}`)
 	})
 
-	client := setupClient()
 	err := client.EnableComputeService(context.Background(), "gpu-node-01")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -229,19 +221,18 @@ func TestEnableComputeService(t *testing.T) {
 }
 
 func TestEnableComputeServiceAlreadyEnabled(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"services": [{"id": 42, "host": "gpu-node-01", "binary": "nova-compute", "status": "enabled", "state": "up"}]}`)
 	})
-	th.Mux.HandleFunc("/os-services/42", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services/42", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"service": {"id": 42, "host": "gpu-node-01", "binary": "nova-compute", "status": "enabled", "state": "up"}}`)
 	})
 
-	client := setupClient()
 	err := client.EnableComputeService(context.Background(), "gpu-node-01")
 	if err != nil {
 		t.Fatalf("expected nil error for idempotent enable, got: %v", err)
@@ -249,14 +240,13 @@ func TestEnableComputeServiceAlreadyEnabled(t *testing.T) {
 }
 
 func TestListInstancesErrorWrapping(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/servers/detail", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	client := setupClient()
 	_, err := client.ListInstances(context.Background(), "gpu-node-01")
 	if err == nil {
 		t.Fatal("expected error")
@@ -270,15 +260,14 @@ func TestListInstancesErrorWrapping(t *testing.T) {
 }
 
 func TestDisableComputeServiceErrorWrapping(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"services": []}`)
 	})
 
-	client := setupClient()
 	err := client.DisableComputeService(context.Background(), "gpu-node-01", "test")
 	if err == nil {
 		t.Fatal("expected error")
@@ -292,15 +281,14 @@ func TestDisableComputeServiceErrorWrapping(t *testing.T) {
 }
 
 func TestEnableComputeServiceErrorWrapping(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"services": []}`)
 	})
 
-	client := setupClient()
 	err := client.EnableComputeService(context.Background(), "gpu-node-01")
 	if err == nil {
 		t.Fatal("expected error")
@@ -314,14 +302,13 @@ func TestEnableComputeServiceErrorWrapping(t *testing.T) {
 }
 
 func TestGetComputeServiceErrorWrapping(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-services", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	client := setupClient()
 	_, err := client.GetComputeService(context.Background(), "gpu-node-01")
 	if err == nil {
 		t.Fatal("expected error")
@@ -335,14 +322,13 @@ func TestGetComputeServiceErrorWrapping(t *testing.T) {
 }
 
 func TestListActiveMigrationsErrorWrapping(t *testing.T) {
-	th.SetupHTTP()
-	defer th.TeardownHTTP()
+	client, fakeServer := setupClient()
+	defer fakeServer.Teardown()
 
-	th.Mux.HandleFunc("/os-migrations", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/os-migrations", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	client := setupClient()
 	_, err := client.ListActiveMigrations(context.Background(), "gpu-node-01")
 	if err == nil {
 		t.Fatal("expected error")
