@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/slurmtack/slurmtack/internal/service"
@@ -21,6 +24,74 @@ type apiTestSlurmNodeStateReader struct {
 	err       error
 }
 
+type capturedRecord struct {
+	Message string
+	Attrs   map[string]string
+}
+
+type captureStore struct {
+	mu      sync.Mutex
+	records []*capturedRecord
+}
+
+func (s *captureStore) find(msg string) *capturedRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.records {
+		if r.Message == msg {
+			return r
+		}
+	}
+	return nil
+}
+
+func (s *captureStore) findLast(msg string) *capturedRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.records) - 1; i >= 0; i-- {
+		if s.records[i].Message == msg {
+			return s.records[i]
+		}
+	}
+	return nil
+}
+
+type captureHandler struct {
+	shared *captureStore
+	attrs  []slog.Attr
+}
+
+func newCaptureLogger() (*slog.Logger, *captureStore) {
+	cs := &captureStore{}
+	return slog.New(&captureHandler{shared: cs}), cs
+}
+
+func (h *captureHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	rec := &capturedRecord{Message: r.Message, Attrs: make(map[string]string)}
+	for _, attr := range h.attrs {
+		rec.Attrs[attr.Key] = attr.Value.String()
+	}
+	r.Attrs(func(attr slog.Attr) bool {
+		rec.Attrs[attr.Key] = attr.Value.String()
+		return true
+	})
+	h.shared.mu.Lock()
+	h.shared.records = append(h.shared.records, rec)
+	h.shared.mu.Unlock()
+	return nil
+}
+
+func (h *captureHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	merged := make([]slog.Attr, len(h.attrs)+len(attrs))
+	copy(merged, h.attrs)
+	copy(merged[len(h.attrs):], attrs)
+	return &captureHandler{shared: h.shared, attrs: merged}
+}
+
+func (h *captureHandler) WithGroup(string) slog.Handler { return h }
+
 func (r *apiTestSlurmNodeStateReader) GetNodeState(_ context.Context, _ string) (*slurm.NodeState, error) {
 	return r.nodeState, r.err
 }
@@ -32,6 +103,12 @@ func setupTestServer(t *testing.T) *Server {
 }
 
 func setupTestServerWithStore(t *testing.T, readers ...service.SlurmNodeStateReader) (*Server, *store.SQLiteStore) {
+	t.Helper()
+	logger, _ := newCaptureLogger()
+	return setupTestServerWithStoreAndLogger(t, logger, readers...)
+}
+
+func setupTestServerWithStoreAndLogger(t *testing.T, logger *slog.Logger, readers ...service.SlurmNodeStateReader) (*Server, *store.SQLiteStore) {
 	t.Helper()
 	f, err := os.CreateTemp("", "slurmtack-api-test-*.db")
 	if err != nil {
@@ -50,7 +127,7 @@ func setupTestServerWithStore(t *testing.T, readers ...service.SlurmNodeStateRea
 	if len(readers) > 0 {
 		svc = svc.WithSlurmNodeStateReader(readers[0])
 	}
-	return NewServer(":0", "test-token", sqlStore, svc), sqlStore
+	return NewServer(":0", "test-token", sqlStore, svc, logger), sqlStore
 }
 
 func TestHealthEndpoint(t *testing.T) {
@@ -370,5 +447,136 @@ func TestCancelStub(t *testing.T) {
 
 	if w.Code != http.StatusNotImplemented {
 		t.Fatalf("expected 501, got %d", w.Code)
+	}
+}
+
+func TestAccessLogSuccessfulV1Request(t *testing.T) {
+	logger, logs := newCaptureLogger()
+	srv := setupTestServerWithLogger(t, logger)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/v1/switches", bytes.NewBufferString(`{"direction":"slurm_to_openstack","requested_by":"operator-1","node_name":"gpu-01"}`))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "192.0.2.50:1234"
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", w.Code)
+	}
+
+	var createResp SwitchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("unmarshal create response: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodGet, "/v1/switches/"+createResp.ExecutionID, nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.RemoteAddr = "192.0.2.50:1234"
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	assertAPILogRecord(t, logs.findLast("api.request"), http.MethodGet, "/v1/switches/:id", "/v1/switches/"+createResp.ExecutionID, http.StatusOK, "192.0.2.50")
+	assertNoAPISensitiveAttrs(t, logs.findLast("api.request"), "test-token")
+}
+
+func TestAccessLogAuthorizationFailure(t *testing.T) {
+	logger, logs := newCaptureLogger()
+	srv := setupTestServerWithLogger(t, logger)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/v1/switches", bytes.NewBufferString(`{"requested_by":"operator-1"}`))
+	req.Header.Set("Authorization", "Bearer secret-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "198.51.100.7:9999"
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+
+	assertAPILogRecord(t, logs.findLast("api.request"), http.MethodPost, "/v1/switches", "/v1/switches", http.StatusUnauthorized, "198.51.100.7")
+	assertNoAPISensitiveAttrs(t, logs.findLast("api.request"), "secret-token", "operator-1")
+}
+
+func TestAccessLogHealthRequest(t *testing.T) {
+	logger, logs := newCaptureLogger()
+	srv := setupTestServerWithLogger(t, logger)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/health", nil)
+	req.RemoteAddr = "203.0.113.9:8080"
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	assertAPILogRecord(t, logs.findLast("api.request"), http.MethodGet, "/health", "/health", http.StatusOK, "203.0.113.9")
+}
+
+func setupTestServerWithLogger(t *testing.T, logger *slog.Logger) *Server {
+	t.Helper()
+	srv, _ := setupTestServerWithStoreAndLogger(t, logger)
+	return srv
+}
+
+func assertAPILog(t *testing.T, logs *captureStore, method, route, path string, statusCode int, clientIP string) {
+	t.Helper()
+	assertAPILogRecord(t, logs.find("api.request"), method, route, path, statusCode, clientIP)
+}
+
+func assertAPILogRecord(t *testing.T, rec *capturedRecord, method, route, path string, statusCode int, clientIP string) {
+	t.Helper()
+	if rec == nil {
+		t.Fatal("expected api.request log")
+	}
+	if rec.Attrs["component"] != "api" {
+		t.Fatalf("component = %q, want %q", rec.Attrs["component"], "api")
+	}
+	if rec.Attrs["event"] != "api.request" {
+		t.Fatalf("event = %q, want %q", rec.Attrs["event"], "api.request")
+	}
+	if rec.Attrs["method"] != method {
+		t.Fatalf("method = %q, want %q", rec.Attrs["method"], method)
+	}
+	if rec.Attrs["route"] != route {
+		t.Fatalf("route = %q, want %q", rec.Attrs["route"], route)
+	}
+	if rec.Attrs["path"] != path {
+		t.Fatalf("path = %q, want %q", rec.Attrs["path"], path)
+	}
+	if rec.Attrs["status_code"] != strconv.Itoa(statusCode) {
+		t.Fatalf("status_code = %q, want %d", rec.Attrs["status_code"], statusCode)
+	}
+	if rec.Attrs["client_ip"] != clientIP {
+		t.Fatalf("client_ip = %q, want %q", rec.Attrs["client_ip"], clientIP)
+	}
+	if rec.Attrs["latency"] == "" {
+		t.Fatal("expected latency attr")
+	}
+}
+
+func assertNoAPISensitiveAttrs(t *testing.T, rec *capturedRecord, forbiddenValues ...string) {
+	t.Helper()
+	if rec == nil {
+		t.Fatal("expected api.request log")
+	}
+	for key, value := range rec.Attrs {
+		for _, forbidden := range forbiddenValues {
+			if forbidden != "" && strings.Contains(value, forbidden) {
+				t.Fatalf("log attr %q leaked sensitive value %q", key, forbidden)
+			}
+		}
+	}
+	if _, ok := rec.Attrs["authorization"]; ok {
+		t.Fatal("log should not include authorization attr")
+	}
+	if _, ok := rec.Attrs["body"]; ok {
+		t.Fatal("log should not include body attr")
 	}
 }

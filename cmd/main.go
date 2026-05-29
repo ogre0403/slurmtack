@@ -93,6 +93,7 @@ func main() {
 		slurmClient = slurm.NewRestClient(
 			cfg.SlurmAPIURL,
 			cfg.SlurmJWTToken,
+			slurm.WithLogger(baseLogger),
 			slurm.WithSlurmUser(cfg.SlurmAPIUser),
 			slurm.WithAdminCredentials(cfg.SlurmAdminUser, cfg.SlurmAdminJWTToken),
 			slurm.WithAMQPURL(cfg.AMQPURL),
@@ -138,7 +139,7 @@ func main() {
 	if slurmClient != nil {
 		svc = svc.WithSlurmNodeStateReader(slurmClient)
 	}
-	srv := api.NewServer(cfg.ListenAddr, cfg.APIToken, sqlStore, svc)
+	srv := api.NewServer(cfg.ListenAddr, cfg.APIToken, sqlStore, svc, baseLogger)
 
 	wg.Add(1)
 	go func() {

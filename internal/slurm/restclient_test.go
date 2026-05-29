@@ -3,11 +3,71 @@ package slurm
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+type capturedRecord struct {
+	Message string
+	Attrs   map[string]string
+}
+
+type captureStore struct {
+	mu      sync.Mutex
+	records []*capturedRecord
+}
+
+func (s *captureStore) find(msg string) *capturedRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.records {
+		if r.Message == msg {
+			return r
+		}
+	}
+	return nil
+}
+
+type captureHandler struct {
+	shared *captureStore
+	attrs  []slog.Attr
+}
+
+func newCaptureLogger() (*slog.Logger, *captureStore) {
+	cs := &captureStore{}
+	return slog.New(&captureHandler{shared: cs}), cs
+}
+
+func (h *captureHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	rec := &capturedRecord{Message: r.Message, Attrs: make(map[string]string)}
+	for _, attr := range h.attrs {
+		rec.Attrs[attr.Key] = attr.Value.String()
+	}
+	r.Attrs(func(attr slog.Attr) bool {
+		rec.Attrs[attr.Key] = attr.Value.String()
+		return true
+	})
+	h.shared.mu.Lock()
+	h.shared.records = append(h.shared.records, rec)
+	h.shared.mu.Unlock()
+	return nil
+}
+
+func (h *captureHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	merged := make([]slog.Attr, len(h.attrs)+len(attrs))
+	copy(merged, h.attrs)
+	copy(merged[len(h.attrs):], attrs)
+	return &captureHandler{shared: h.shared, attrs: merged}
+}
+
+func (h *captureHandler) WithGroup(string) slog.Handler { return h }
 
 func TestSubmitPlaceholderJob_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -350,6 +410,82 @@ func TestConnectionRefused(t *testing.T) {
 	}
 }
 
+func TestRequestLogSuccessfulWorkloadRequest(t *testing.T) {
+	logger, logs := newCaptureLogger()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertSlurmHeaders(t, r, "cloud-user", "workload-token")
+		json.NewEncoder(w).Encode(nodeInfoResponse{Nodes: []nodeInfo{{Name: "gpu-01", State: []string{"idle"}}}})
+	}))
+	defer srv.Close()
+
+	client := NewRestClient(srv.URL, "workload-token", WithLogger(logger))
+	_, err := client.GetNodeState(context.Background(), "gpu-01")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertSlurmRequestLog(t, logs.find("slurmrestd.request"), http.MethodGet, "/slurm/v0.0.40/node/gpu-01", "workload", "200", "")
+	assertNoSensitiveValues(t, logs.find("slurmrestd.request"), "workload-token")
+}
+
+func TestRequestLogSuccessfulAdminRequest(t *testing.T) {
+	logger, logs := newCaptureLogger()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertSlurmHeaders(t, r, "root", "admin-token")
+		json.NewEncoder(w).Encode(slurmErrorResponse{})
+	}))
+	defer srv.Close()
+
+	client := NewRestClient(srv.URL, "workload-token",
+		WithLogger(logger),
+		WithSlurmUser("cloud-user"),
+		WithAdminCredentials("root", "admin-token"),
+	)
+	if err := client.DrainNode(context.Background(), "gpu-01", "maintenance"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertSlurmRequestLog(t, logs.find("slurmrestd.request"), http.MethodPost, "/slurm/v0.0.40/node/gpu-01", "admin", "200", "")
+	assertNoSensitiveValues(t, logs.find("slurmrestd.request"), "admin-token", "workload-token")
+}
+
+func TestRequestLogAPIRejection(t *testing.T) {
+	logger, logs := newCaptureLogger()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(slurmErrorResponse{Errors: []slurmError{{Error: "invalid partition", Errno: 1}}})
+	}))
+	defer srv.Close()
+
+	client := NewRestClient(srv.URL, "secret-token", WithLogger(logger))
+	_, err := client.SubmitPlaceholderJob(context.Background(), PlaceholderJobRequest{ExecutionID: "exec-1", Partition: "bad"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	assertSlurmRequestLog(t, logs.find("slurmrestd.request"), http.MethodPost, "/slurm/v0.0.40/job/submit", "workload", "400", "invalid partition")
+	assertNoSensitiveValues(t, logs.find("slurmrestd.request"), "secret-token")
+}
+
+func TestRequestLogTransportError(t *testing.T) {
+	logger, logs := newCaptureLogger()
+	client := NewRestClient("http://127.0.0.1:1", "secret-token", WithLogger(logger))
+	err := client.CancelJob(context.Background(), "1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	rec := logs.find("slurmrestd.request")
+	if rec == nil {
+		t.Fatal("expected slurmrestd.request log")
+	}
+	assertSlurmRequestLog(t, rec, http.MethodDelete, "/slurm/v0.0.40/job/1", "workload", "", "")
+	if rec.Attrs["error"] == "" {
+		t.Fatal("expected transport error attr")
+	}
+	assertNoSensitiveValues(t, rec, "secret-token")
+}
+
 func assertSlurmHeaders(t *testing.T, r *http.Request, expectedUser, expectedToken string) {
 	t.Helper()
 	user := r.Header.Get("X-SLURM-USER-NAME")
@@ -359,5 +495,64 @@ func assertSlurmHeaders(t *testing.T, r *http.Request, expectedUser, expectedTok
 	}
 	if token != expectedToken {
 		t.Errorf("expected X-SLURM-USER-TOKEN=%q, got %q", expectedToken, token)
+	}
+}
+
+func assertSlurmRequestLog(t *testing.T, rec *capturedRecord, method, path, identity, statusCode, apiError string) {
+	t.Helper()
+	if rec == nil {
+		t.Fatal("expected slurmrestd.request log")
+	}
+	if rec.Attrs["component"] != "slurmrestd_client" {
+		t.Fatalf("component = %q, want %q", rec.Attrs["component"], "slurmrestd_client")
+	}
+	if rec.Attrs["event"] != "slurmrestd.request" {
+		t.Fatalf("event = %q, want %q", rec.Attrs["event"], "slurmrestd.request")
+	}
+	if rec.Attrs["method"] != method {
+		t.Fatalf("method = %q, want %q", rec.Attrs["method"], method)
+	}
+	if rec.Attrs["path"] != path {
+		t.Fatalf("path = %q, want %q", rec.Attrs["path"], path)
+	}
+	if rec.Attrs["identity"] != identity {
+		t.Fatalf("identity = %q, want %q", rec.Attrs["identity"], identity)
+	}
+	if statusCode == "" {
+		if _, ok := rec.Attrs["status_code"]; ok {
+			t.Fatalf("status_code = %q, want absent", rec.Attrs["status_code"])
+		}
+	} else if rec.Attrs["status_code"] != statusCode {
+		t.Fatalf("status_code = %q, want %q", rec.Attrs["status_code"], statusCode)
+	}
+	if apiError == "" {
+		if _, ok := rec.Attrs["api_error"]; ok {
+			t.Fatalf("api_error = %q, want absent", rec.Attrs["api_error"])
+		}
+	} else if rec.Attrs["api_error"] != apiError {
+		t.Fatalf("api_error = %q, want %q", rec.Attrs["api_error"], apiError)
+	}
+	if rec.Attrs["latency"] == "" {
+		t.Fatal("expected latency attr")
+	}
+}
+
+func assertNoSensitiveValues(t *testing.T, rec *capturedRecord, forbiddenValues ...string) {
+	t.Helper()
+	if rec == nil {
+		t.Fatal("expected slurmrestd.request log")
+	}
+	if _, ok := rec.Attrs["body"]; ok {
+		t.Fatal("log should not include body attr")
+	}
+	if _, ok := rec.Attrs["token"]; ok {
+		t.Fatal("log should not include token attr")
+	}
+	for key, value := range rec.Attrs {
+		for _, forbidden := range forbiddenValues {
+			if forbidden != "" && strings.Contains(value, forbidden) {
+				t.Fatalf("log attr %q leaked sensitive value %q", key, forbidden)
+			}
+		}
 	}
 }

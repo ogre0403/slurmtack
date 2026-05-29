@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/slurmtack/slurmtack/internal/service"
 	"github.com/slurmtack/slurmtack/internal/store"
+	"github.com/slurmtack/slurmtack/internal/trace"
 )
 
 type Server struct {
@@ -15,10 +17,10 @@ type Server struct {
 	engine     *gin.Engine
 }
 
-func NewServer(listenAddr string, token string, sqlStore *store.SQLiteStore, svc *service.SwitchService) *Server {
+func NewServer(listenAddr string, token string, sqlStore *store.SQLiteStore, svc *service.SwitchService, logger *slog.Logger) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
-	engine.Use(gin.Recovery())
+	engine.Use(accessLogMiddleware(trace.OrDefault(logger).With("component", "api")), gin.Recovery())
 
 	healthHandler := NewHealthHandler(sqlStore)
 	engine.GET("/health", healthHandler.Check)
@@ -38,6 +40,30 @@ func NewServer(listenAddr string, token string, sqlStore *store.SQLiteStore, svc
 			Addr:    listenAddr,
 			Handler: engine,
 		},
+	}
+}
+
+func accessLogMiddleware(logger *slog.Logger) gin.HandlerFunc {
+	logger = trace.OrDefault(logger)
+
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+
+		route := c.FullPath()
+		if route == "" {
+			route = c.Request.URL.Path
+		}
+
+		logger.Info("api.request",
+			"event", "api.request",
+			"method", c.Request.Method,
+			"route", route,
+			"path", c.Request.URL.Path,
+			"status_code", c.Writer.Status(),
+			"latency", time.Since(start),
+			"client_ip", c.ClientIP(),
+		)
 	}
 }
 

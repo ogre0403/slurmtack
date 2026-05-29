@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/slurmtack/slurmtack/internal/trace"
 )
 
 type Option func(*RestClient)
@@ -41,12 +44,19 @@ func WithAdminCredentials(user, token string) Option {
 	}
 }
 
+func WithLogger(logger *slog.Logger) Option {
+	return func(rc *RestClient) {
+		rc.logger = trace.OrDefault(logger).With("component", "slurmrestd_client")
+	}
+}
+
 type RestClient struct {
 	baseURL            string
 	jwtToken           string
 	slurmUser          string
 	adminUser          string
 	adminToken         string
+	logger             *slog.Logger
 	httpClient         *http.Client
 	amqpURL            string
 	placeholderSIFPath string
@@ -57,6 +67,7 @@ func NewRestClient(baseURL, jwtToken string, opts ...Option) *RestClient {
 		baseURL:   strings.TrimRight(baseURL, "/"),
 		jwtToken:  jwtToken,
 		slurmUser: "cloud-user",
+		logger:    trace.OrDefault(nil).With("component", "slurmrestd_client"),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -245,18 +256,20 @@ func (c *RestClient) doJSONAdmin(ctx context.Context, method, path string, body 
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request body: %w", err)
 	}
-	return c.doRequestWithIdentity(ctx, method, path, bytes.NewReader(data), c.adminUser, c.adminToken)
+	return c.doRequestWithIdentity(ctx, method, path, bytes.NewReader(data), "admin", c.adminUser, c.adminToken)
 }
 
 func (c *RestClient) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
-	return c.doRequestWithIdentity(ctx, method, path, body, c.slurmUser, c.jwtToken)
+	return c.doRequestWithIdentity(ctx, method, path, body, "workload", c.slurmUser, c.jwtToken)
 }
 
-func (c *RestClient) doRequestWithIdentity(ctx context.Context, method, path string, body io.Reader, slurmUser, slurmToken string) (*http.Response, error) {
+func (c *RestClient) doRequestWithIdentity(ctx context.Context, method, path string, body io.Reader, identity, slurmUser, slurmToken string) (*http.Response, error) {
+	started := time.Now()
 	url := c.baseURL + path
 
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
+		c.logRequest(method, path, identity, started, 0, "", err)
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
@@ -266,6 +279,7 @@ func (c *RestClient) doRequestWithIdentity(ctx context.Context, method, path str
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.logRequest(method, path, identity, started, 0, "", err)
 		return nil, err
 	}
 
@@ -273,13 +287,20 @@ func (c *RestClient) doRequestWithIdentity(ctx context.Context, method, path str
 		defer resp.Body.Close()
 		var errResp slurmErrorResponse
 		if decErr := json.NewDecoder(resp.Body).Decode(&errResp); decErr == nil && len(errResp.Errors) > 0 {
-			return nil, c.apiError(resp.StatusCode, errResp.Errors)
+			apiErr := c.apiError(resp.StatusCode, errResp.Errors)
+			c.logRequest(method, path, identity, started, resp.StatusCode, summarizeMessages(apiErr.Messages), apiErr)
+			return nil, apiErr
 		}
-		return nil, &SlurmAPIError{
+
+		apiErr := &SlurmAPIError{
 			StatusCode: resp.StatusCode,
 			Messages:   []string{http.StatusText(resp.StatusCode)},
 		}
+		c.logRequest(method, path, identity, started, resp.StatusCode, summarizeMessages(apiErr.Messages), apiErr)
+		return nil, apiErr
 	}
+
+	c.logRequest(method, path, identity, started, resp.StatusCode, "", nil)
 
 	return resp, nil
 }
@@ -294,4 +315,28 @@ func (c *RestClient) apiError(statusCode int, errs []slurmError) *SlurmAPIError 
 		msgs[i] = e.Error
 	}
 	return &SlurmAPIError{StatusCode: statusCode, Messages: msgs}
+}
+
+func (c *RestClient) logRequest(method, path, identity string, started time.Time, statusCode int, apiErrorSummary string, err error) {
+	attrs := []any{
+		"event", "slurmrestd.request",
+		"method", method,
+		"path", path,
+		"identity", identity,
+		"latency", time.Since(started),
+	}
+	if statusCode > 0 {
+		attrs = append(attrs, "status_code", statusCode)
+	}
+	if apiErrorSummary != "" {
+		attrs = append(attrs, "api_error", apiErrorSummary)
+	}
+	if err != nil {
+		attrs = append(attrs, "error", err.Error())
+	}
+	c.logger.Info("slurmrestd.request", attrs...)
+}
+
+func summarizeMessages(messages []string) string {
+	return strings.Join(messages, "; ")
 }
