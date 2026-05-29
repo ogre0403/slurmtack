@@ -9,8 +9,20 @@ import (
 	"testing"
 
 	"github.com/slurmtack/slurmtack/internal/domain"
+	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
 )
+
+type fakeSlurmNodeStateReader struct {
+	nodeState *slurm.NodeState
+	err       error
+	calls     int
+}
+
+func (f *fakeSlurmNodeStateReader) GetNodeState(_ context.Context, _ string) (*slurm.NodeState, error) {
+	f.calls++
+	return f.nodeState, f.err
+}
 
 type recordingEventPublisher struct {
 	store                     store.Store
@@ -125,6 +137,126 @@ func TestRequestSwitchRejectsOpenStackToSlurmWithoutNodeName(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidSwitchRequest) {
 		t.Fatalf("RequestSwitch() error = %v, want ErrInvalidSwitchRequest", err)
+	}
+}
+
+func TestRequestSwitchRejectsOpenStackToSlurmWhenNodeAlreadyOwnedBySlurm(t *testing.T) {
+	tests := []struct {
+		name  string
+		state string
+	}{
+		{name: "idle", state: "idle"},
+		{name: "mixed", state: "mixed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := store.NewMemoryStore()
+			publisher := &recordingEventPublisher{store: s}
+			reader := &fakeSlurmNodeStateReader{nodeState: &slurm.NodeState{NodeName: "gpu-01", State: tt.state}}
+			svc := NewSwitchService(s, nil, publisher).WithSlurmNodeStateReader(reader)
+
+			_, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+				Direction:   domain.DirectionOpenStackToSlurm,
+				RequestedBy: "operator-1",
+				NodeName:    "gpu-01",
+			})
+			if !errors.Is(err, ErrInvalidSwitchRequest) {
+				t.Fatalf("RequestSwitch() error = %v, want ErrInvalidSwitchRequest", err)
+			}
+			if !strings.Contains(err.Error(), "already under Slurm ownership") {
+				t.Fatalf("RequestSwitch() error = %q, want already-under-Slurm message", err.Error())
+			}
+			if reader.calls != 1 {
+				t.Fatalf("GetNodeState() calls = %d, want 1", reader.calls)
+			}
+			if publisher.requestedCalled || publisher.nodeSelectedCalled {
+				t.Fatal("expected no admission events to be published")
+			}
+
+			executions, listErr := s.ListExecutions(context.Background(), "")
+			if listErr != nil {
+				t.Fatalf("ListExecutions() error = %v", listErr)
+			}
+			if len(executions) != 0 {
+				t.Fatalf("execution count = %d, want 0", len(executions))
+			}
+		})
+	}
+}
+
+func TestRequestSwitchAllowsResumableOpenStackToSlurmState(t *testing.T) {
+	tests := []struct {
+		name  string
+		state string
+	}{
+		{name: "drained", state: "drained"},
+		{name: "mixed with drain token", state: "mixed+drain"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := store.NewMemoryStore()
+			publisher := &recordingEventPublisher{store: s}
+			reader := &fakeSlurmNodeStateReader{nodeState: &slurm.NodeState{NodeName: "gpu-01", State: tt.state}}
+			svc := NewSwitchService(s, nil, publisher).WithSlurmNodeStateReader(reader)
+
+			id, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+				Direction:   domain.DirectionOpenStackToSlurm,
+				RequestedBy: "operator-1",
+				NodeName:    "gpu-01",
+			})
+			if err != nil {
+				t.Fatalf("RequestSwitch() error = %v", err)
+			}
+			if reader.calls != 1 {
+				t.Fatalf("GetNodeState() calls = %d, want 1", reader.calls)
+			}
+			if !publisher.requestedCalled || !publisher.nodeSelectedCalled {
+				t.Fatal("expected both admission events to be published")
+			}
+
+			exec, getErr := s.GetExecution(context.Background(), id)
+			if getErr != nil {
+				t.Fatalf("GetExecution() error = %v", getErr)
+			}
+			if exec.CurrentState != domain.StateAwaitingTargetNode {
+				t.Fatalf("CurrentState = %q, want %q", exec.CurrentState, domain.StateAwaitingTargetNode)
+			}
+		})
+	}
+}
+
+func TestRequestSwitchReturnsDependencyErrorWhenSlurmLookupFails(t *testing.T) {
+	s := store.NewMemoryStore()
+	publisher := &recordingEventPublisher{store: s}
+	reader := &fakeSlurmNodeStateReader{err: errors.New("slurm unavailable")}
+	svc := NewSwitchService(s, nil, publisher).WithSlurmNodeStateReader(reader)
+
+	_, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:   domain.DirectionOpenStackToSlurm,
+		RequestedBy: "operator-1",
+		NodeName:    "gpu-01",
+	})
+	if !errors.Is(err, ErrSwitchRequestDependency) {
+		t.Fatalf("RequestSwitch() error = %v, want ErrSwitchRequestDependency", err)
+	}
+	if !strings.Contains(err.Error(), "getting slurm node state for gpu-01") {
+		t.Fatalf("RequestSwitch() error = %q, want lookup failure context", err.Error())
+	}
+	if reader.calls != 1 {
+		t.Fatalf("GetNodeState() calls = %d, want 1", reader.calls)
+	}
+	if publisher.requestedCalled || publisher.nodeSelectedCalled {
+		t.Fatal("expected no admission events to be published")
+	}
+
+	executions, listErr := s.ListExecutions(context.Background(), "")
+	if listErr != nil {
+		t.Fatalf("ListExecutions() error = %v", listErr)
+	}
+	if len(executions) != 0 {
+		t.Fatalf("execution count = %d, want 0", len(executions))
 	}
 }
 

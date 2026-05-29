@@ -2,17 +2,36 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/slurmtack/slurmtack/internal/service"
+	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
 )
 
+type apiTestSlurmNodeStateReader struct {
+	nodeState *slurm.NodeState
+	err       error
+}
+
+func (r *apiTestSlurmNodeStateReader) GetNodeState(_ context.Context, _ string) (*slurm.NodeState, error) {
+	return r.nodeState, r.err
+}
+
 func setupTestServer(t *testing.T) *Server {
+	t.Helper()
+	srv, _ := setupTestServerWithStore(t)
+	return srv
+}
+
+func setupTestServerWithStore(t *testing.T, readers ...service.SlurmNodeStateReader) (*Server, *store.SQLiteStore) {
 	t.Helper()
 	f, err := os.CreateTemp("", "slurmtack-api-test-*.db")
 	if err != nil {
@@ -28,7 +47,10 @@ func setupTestServer(t *testing.T) *Server {
 	t.Cleanup(func() { sqlStore.Close() })
 
 	svc := service.NewSwitchService(sqlStore, nil)
-	return NewServer(":0", "test-token", sqlStore, svc)
+	if len(readers) > 0 {
+		svc = svc.WithSlurmNodeStateReader(readers[0])
+	}
+	return NewServer(":0", "test-token", sqlStore, svc), sqlStore
 }
 
 func TestHealthEndpoint(t *testing.T) {
@@ -162,6 +184,56 @@ func TestCreateOpenStackToSlurmRejectsMissingNodeName(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
+}
+
+func TestCreateOpenStackToSlurmRejectsDuplicateSlurmOwnership(t *testing.T) {
+	srv, sqlStore := setupTestServerWithStore(t, &apiTestSlurmNodeStateReader{nodeState: &slurm.NodeState{NodeName: "gpu-01", State: "idle"}})
+
+	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1","node_name":"gpu-01"}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp ErrorResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Error == "" || !strings.Contains(resp.Error, "already under Slurm ownership") {
+		t.Fatalf("unexpected error response: %+v", resp)
+	}
+
+	executions, err := sqlStore.ListExecutions(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListExecutions() error = %v", err)
+	}
+	if len(executions) != 0 {
+		t.Fatalf("execution count = %d, want 0", len(executions))
+	}
+}
+
+func TestCreateOpenStackToSlurmLookupFailureReturnsServerError(t *testing.T) {
+	srv := setupTestServerWithReader(t, &apiTestSlurmNodeStateReader{err: errors.New("slurm unavailable")})
+
+	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1","node_name":"gpu-01"}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func setupTestServerWithReader(t *testing.T, reader service.SlurmNodeStateReader) *Server {
+	t.Helper()
+	srv, _ := setupTestServerWithStore(t, reader)
+	return srv
 }
 
 func TestCreateSwitchInvalidDirection(t *testing.T) {

@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Define REST API requirements for creating, tracking, listing, and authenticating GPU node switch executions.
-## Requirements
 ### Requirement: Request a node switch
 
 The system SHALL accept a switch request via `POST /v1/switches` and return a 202 response with an execution ID and status URL. The request body MUST include `direction` and `requested_by`. For `slurm_to_openstack`, the request MAY include `slurm_constraint` and `slurm_partition`. For `openstack_to_slurm`, the request MUST include `node_name`; before persisting an execution, the system MUST inspect the target node's current Slurm state and reject the request when that state already indicates active Slurm ownership. Accepted `openstack_to_slurm` requests MUST persist the execution in `awaiting_target_node` and use the supplied node to publish the MQ node-selection signal that continues the workflow.
@@ -64,65 +62,3 @@ The system SHALL return execution details via `GET /v1/switches/:id` including c
 
 - **WHEN** client sends GET `/v1/switches/:id` for a non-existent ID
 - **THEN** system returns HTTP 404 with error message
-
-### Requirement: List executions
-
-The system SHALL return a list of executions via `GET /v1/switches` with optional query filters for `node` and `status`.
-
-#### Scenario: List all executions
-
-- **WHEN** client sends GET `/v1/switches`
-- **THEN** system returns HTTP 200 with array of execution summaries
-
-#### Scenario: Filter by node name
-
-- **WHEN** client sends GET `/v1/switches?node=gpu-01`
-- **THEN** system returns HTTP 200 with only executions matching `node_name` `gpu-01`
-
-#### Scenario: Filter by overall status
-
-- **WHEN** client sends GET `/v1/switches?status=active`
-- **THEN** system returns HTTP 200 with only executions with `overall_status` `active`
-
-### Requirement: Token authentication
-
-The system SHALL require a valid bearer token in the `Authorization` header for all `/v1/` endpoints. The token MUST match the configured `API_TOKEN` environment variable.
-
-#### Scenario: Valid token
-
-- **WHEN** client sends request with header `Authorization: Bearer <valid-token>`
-- **THEN** system processes the request normally
-
-#### Scenario: Missing token
-
-- **WHEN** client sends request without Authorization header
-- **THEN** system returns HTTP 401 with error message
-
-#### Scenario: Invalid token
-
-- **WHEN** client sends request with header `Authorization: Bearer wrong-token`
-- **THEN** system returns HTTP 401 with error message
-
-### Requirement: Health endpoint
-
-The system SHALL expose `GET /health` without authentication that returns HTTP 200 when the daemon is running and the store is reachable.
-
-#### Scenario: Healthy daemon
-
-- **WHEN** client sends GET `/health`
-- **THEN** system returns HTTP 200 with `{"status": "ok"}`
-
-#### Scenario: Store unreachable
-
-- **WHEN** the SQLite database is inaccessible
-- **THEN** system returns HTTP 503 with `{"status": "unhealthy", "error": "<reason>"}`
-
-### Requirement: Cancel stub endpoint
-
-The system SHALL expose `POST /v1/switches/:id/cancel` that returns HTTP 501 Not Implemented. This endpoint will be implemented in a future change.
-
-#### Scenario: Cancel request
-
-- **WHEN** client sends POST `/v1/switches/:id/cancel`
-- **THEN** system returns HTTP 501 with `{"error": "not implemented"}`
-

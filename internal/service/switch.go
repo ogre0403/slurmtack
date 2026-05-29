@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/slurmtack/slurmtack/internal/domain"
+	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
 	"github.com/slurmtack/slurmtack/internal/trace"
 )
@@ -24,15 +25,22 @@ type SwitchRequest struct {
 
 var ErrInvalidSwitchRequest = errors.New("invalid switch request")
 
+var ErrSwitchRequestDependency = errors.New("switch request dependency failure")
+
 type EventPublisher interface {
 	PublishRequested(ctx context.Context, executionID string, direction domain.SwitchDirection) error
 	PublishNodeSelected(ctx context.Context, executionID, nodeName string) error
 }
 
+type SlurmNodeStateReader interface {
+	GetNodeState(ctx context.Context, nodeName string) (*slurm.NodeState, error)
+}
+
 type SwitchService struct {
-	store     store.Store
-	publisher EventPublisher
-	logger    *slog.Logger
+	store                store.Store
+	publisher            EventPublisher
+	logger               *slog.Logger
+	slurmNodeStateReader SlurmNodeStateReader
 }
 
 func NewSwitchService(s store.Store, logger *slog.Logger, publishers ...EventPublisher) *SwitchService {
@@ -43,12 +51,12 @@ func NewSwitchService(s store.Store, logger *slog.Logger, publishers ...EventPub
 	return &SwitchService{store: s, publisher: publisher, logger: trace.OrDefault(logger)}
 }
 
-func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (string, error) {
-	id, err := generateID()
-	if err != nil {
-		return "", fmt.Errorf("generating execution id: %w", err)
-	}
+func (s *SwitchService) WithSlurmNodeStateReader(reader SlurmNodeStateReader) *SwitchService {
+	s.slurmNodeStateReader = reader
+	return s
+}
 
+func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (string, error) {
 	var desired, previous domain.Owner
 	currentState := domain.StateRequested
 	nodeName := req.NodeName
@@ -65,6 +73,17 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 		currentState = domain.StateAwaitingTargetNode
 	default:
 		return "", fmt.Errorf("%w: invalid direction: %s", ErrInvalidSwitchRequest, req.Direction)
+	}
+
+	if req.Direction == domain.DirectionOpenStackToSlurm {
+		if err := s.ensureOpenStackToSlurmRequestAllowed(ctx, req.NodeName); err != nil {
+			return "", err
+		}
+	}
+
+	id, err := generateID()
+	if err != nil {
+		return "", fmt.Errorf("generating execution id: %w", err)
 	}
 
 	now := time.Now()
@@ -98,6 +117,29 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 	)
 
 	return id, nil
+}
+
+func (s *SwitchService) ensureOpenStackToSlurmRequestAllowed(ctx context.Context, nodeName string) error {
+	if s.slurmNodeStateReader == nil {
+		return nil
+	}
+
+	state, err := s.slurmNodeStateReader.GetNodeState(ctx, nodeName)
+	if err != nil {
+		return fmt.Errorf("%w: getting slurm node state for %s: %v", ErrSwitchRequestDependency, nodeName, err)
+	}
+	if state == nil {
+		return fmt.Errorf("%w: slurm node state missing for %s", ErrSwitchRequestDependency, nodeName)
+	}
+
+	switch slurm.ClassifyAttachState(state.State) {
+	case slurm.AttachStateResumeRequired:
+		return nil
+	case slurm.AttachStateReady:
+		return fmt.Errorf("%w: node %s is already under Slurm ownership (state: %s)", ErrInvalidSwitchRequest, nodeName, state.State)
+	default:
+		return fmt.Errorf("%w: cannot determine Slurm ownership for node %s (state: %s)", ErrSwitchRequestDependency, nodeName, state.State)
+	}
 }
 
 func (s *SwitchService) publishAdmissionEvents(ctx context.Context, executionID string, req SwitchRequest) {

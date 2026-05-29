@@ -135,6 +135,9 @@ func main() {
 	}
 
 	svc := service.NewSwitchService(sqlStore, baseLogger, publisher)
+	if slurmClient != nil {
+		svc = svc.WithSlurmNodeStateReader(slurmClient)
+	}
 	srv := api.NewServer(cfg.ListenAddr, cfg.APIToken, sqlStore, svc)
 
 	wg.Add(1)
