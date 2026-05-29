@@ -31,8 +31,8 @@ fi
 
 tmux -f "$TMUX_CONF" new-session -d -s "$SESSION_NAME" -n work "exec /bin/zsh -l"
 run_agent claude claude
-# run_agent opencode opencode
-# run_agent codex codex
+run_agent opencode opencode
+run_agent codex codex
 tmux -f "$TMUX_CONF" new-window -t "$SESSION_NAME": -n ops "exec /bin/zsh -l"
 tmux -f "$TMUX_CONF" select-window -t "$SESSION_NAME":1
 

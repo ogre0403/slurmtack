@@ -16,6 +16,7 @@
 				"golang.Go",
 				"openai.chatgpt",
 				"onnovalkering.vscode-singularity",
+				"sst-dev.opencode"
 			],
 			"settings": {
 				"terminal.integrated.defaultProfile.linux": "zsh",
@@ -37,7 +38,7 @@
 	"features": {
 		// Install Coding Agent, Claude Code, OpenCode, Codex, and Gemini
 		"ghcr.io/anthropics/devcontainer-features/claude-code:1": {},
-		// "ghcr.io/stu-bell/devcontainer-features/open-code:0": {},
+		"ghcr.io/stu-bell/devcontainer-features/open-code:0": {},
 		"ghcr.io/cirolosapio/devcontainers-features/alpine-node:0": {
 			"globalPackages": "@fission-ai/openspec@latest @openai/codex"
 		},
@@ -58,7 +59,7 @@
 		"AZURE_OPENAI_API_KEY": "${localEnv:AZURE_OPENAI_API_KEY}",
 	},
 	"mounts": [
-		// "source=opencode_setting,target=/root/.local,type=volume",
+		"source=opencode_setting,target=/root/.local,type=volume",
 		"source=claude_setting,target=/root/.claude_setting,type=volume",
 		"source=codex_setting,target=/root/.codex,type=volume",
 	],

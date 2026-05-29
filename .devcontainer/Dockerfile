@@ -1,4 +1,4 @@
-ARG GO_VER=1.22.4
+ARG GO_VER=1.25.10
 ARG GO_ARCH=alpine
 
 FROM golang:${GO_VER}-${GO_ARCH}
@@ -6,14 +6,14 @@ FROM golang:${GO_VER}-${GO_ARCH}
 RUN  sed -i 's|https://dl-cdn.alpinelinux.org/alpine|https://alpine.cs.nycu.edu.tw|g' /etc/apk/repositories 
 
 # Install Golang extension package tools
-RUN go install github.com/ramya-rao-a/go-outline@v0.0.0-20210608161538-9736a4bde949    && \
-    go install github.com/cweill/gotests/gotests@v1.7.0                                && \
-    go install github.com/fatih/gomodifytags@v1.17.0                                   && \
-    go install github.com/josharian/impl@v1.4.0                                        && \
-    go install github.com/haya14busa/goplay/cmd/goplay@v1.0.0                          && \
-    go install github.com/go-delve/delve/cmd/dlv@v1.25.2                               && \
-    go install honnef.co/go/tools/cmd/staticcheck@v0.4.7                               && \
-    go install golang.org/x/tools/gopls@v0.15.3
+RUN go install github.com/ramya-rao-a/go-outline@1.0.0         && \
+    go install github.com/cweill/gotests/gotests@v1.9.0        && \
+    go install github.com/fatih/gomodifytags@v1.17.0           && \
+    go install github.com/josharian/impl@v1.5.0                && \
+    go install github.com/haya14busa/goplay/cmd/goplay@v1.0.0  && \
+    go install github.com/go-delve/delve/cmd/dlv@v1.26.3       && \
+    go install golang.org/x/tools/gopls@v0.21.1                && \
+    go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
 
 
 RUN apk add --no-cache make libc6-compat gcc musl-dev
@@ -56,8 +56,10 @@ RUN if [ "${INSTALL_PYTHON}" == "true" ]; then \
         # curl -LsSf https://astral.sh/uv/install.sh | sh ;\
     fi
 
-
-
+# FIX: opencode TUI broken
+# https://github.com/anomalyco/opencode/pull/29223
+RUN apk add libgcc libstdc++ libucontext ripgrep
+ENV LD_PRELOAD=/usr/lib/libucontext.so.1
 
 
 
