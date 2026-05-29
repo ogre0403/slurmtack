@@ -24,22 +24,23 @@ type SwitchRequest struct {
 
 var ErrInvalidSwitchRequest = errors.New("invalid switch request")
 
-type RequestedEventPublisher interface {
+type EventPublisher interface {
 	PublishRequested(ctx context.Context, executionID string, direction domain.SwitchDirection) error
+	PublishNodeSelected(ctx context.Context, executionID, nodeName string) error
 }
 
 type SwitchService struct {
-	store              store.Store
-	requestedPublisher RequestedEventPublisher
-	logger             *slog.Logger
+	store     store.Store
+	publisher EventPublisher
+	logger    *slog.Logger
 }
 
-func NewSwitchService(s store.Store, logger *slog.Logger, requestedPublishers ...RequestedEventPublisher) *SwitchService {
-	var requestedPublisher RequestedEventPublisher
-	if len(requestedPublishers) > 0 {
-		requestedPublisher = requestedPublishers[0]
+func NewSwitchService(s store.Store, logger *slog.Logger, publishers ...EventPublisher) *SwitchService {
+	var publisher EventPublisher
+	if len(publishers) > 0 {
+		publisher = publishers[0]
 	}
-	return &SwitchService{store: s, requestedPublisher: requestedPublisher, logger: trace.OrDefault(logger)}
+	return &SwitchService{store: s, publisher: publisher, logger: trace.OrDefault(logger)}
 }
 
 func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (string, error) {
@@ -56,13 +57,12 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 		desired = domain.OwnerOpenStack
 		previous = domain.OwnerSlurm
 	case domain.DirectionOpenStackToSlurm:
-		if req.NodeName != "" {
-			return "", fmt.Errorf("%w: node_name must be delivered through MQ node selection", ErrInvalidSwitchRequest)
+		if req.NodeName == "" {
+			return "", fmt.Errorf("%w: node_name is required for openstack_to_slurm", ErrInvalidSwitchRequest)
 		}
 		desired = domain.OwnerSlurm
 		previous = domain.OwnerOpenStack
 		currentState = domain.StateAwaitingTargetNode
-		nodeName = ""
 	default:
 		return "", fmt.Errorf("%w: invalid direction: %s", ErrInvalidSwitchRequest, req.Direction)
 	}
@@ -86,10 +86,8 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 	if err := s.store.CreateExecution(ctx, exec); err != nil {
 		return "", fmt.Errorf("creating execution: %w", err)
 	}
-	if s.requestedPublisher != nil {
-		if err := s.requestedPublisher.PublishRequested(ctx, id, req.Direction); err != nil {
-			s.logger.Warn("request.requested_publish_failed", "execution_id", id, "direction", string(req.Direction), "error", err.Error())
-		}
+	if s.publisher != nil {
+		s.publishAdmissionEvents(ctx, id, req)
 	}
 
 	s.logger.Info(trace.EventRequestAccepted,
@@ -100,6 +98,18 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 	)
 
 	return id, nil
+}
+
+func (s *SwitchService) publishAdmissionEvents(ctx context.Context, executionID string, req SwitchRequest) {
+	if err := s.publisher.PublishRequested(ctx, executionID, req.Direction); err != nil {
+		s.logger.Warn("request.requested_publish_failed", "execution_id", executionID, "direction", string(req.Direction), "error", err.Error())
+	}
+
+	if req.Direction == domain.DirectionOpenStackToSlurm {
+		if err := s.publisher.PublishNodeSelected(ctx, executionID, req.NodeName); err != nil {
+			s.logger.Warn("request.node_selected_publish_failed", "execution_id", executionID, "direction", string(req.Direction), "node_name", req.NodeName, "error", err.Error())
+		}
+	}
 }
 
 type ExecutionStatus struct {

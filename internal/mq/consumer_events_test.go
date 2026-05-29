@@ -13,6 +13,7 @@ import (
 	"github.com/slurmtack/slurmtack/internal/domain"
 	"github.com/slurmtack/slurmtack/internal/engine"
 	"github.com/slurmtack/slurmtack/internal/orchestrator"
+	"github.com/slurmtack/slurmtack/internal/service"
 	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
 )
@@ -46,6 +47,37 @@ type ackRecorder struct {
 	acked   int
 	nacked  int
 	requeue bool
+}
+
+type serviceDrivenPublisher struct {
+	t        *testing.T
+	consumer *Consumer
+}
+
+func (p *serviceDrivenPublisher) PublishRequested(ctx context.Context, executionID string, direction domain.SwitchDirection) error {
+	p.t.Helper()
+	ack := &ackRecorder{}
+	p.consumer.handleRequested(ctx, newDelivery(p.t, RequestedEvent{
+		ExecutionID: executionID,
+		Direction:   direction,
+	}, ack))
+	if ack.acked != 1 || ack.nacked != 0 {
+		p.t.Fatalf("requested publish acks = %d, nacks = %d, want 1 ack and 0 nacks", ack.acked, ack.nacked)
+	}
+	return nil
+}
+
+func (p *serviceDrivenPublisher) PublishNodeSelected(ctx context.Context, executionID, nodeName string) error {
+	p.t.Helper()
+	ack := &ackRecorder{}
+	p.consumer.handleNodeSelected(ctx, newDelivery(p.t, NodeSelectedEvent{
+		ExecutionID: executionID,
+		NodeName:    nodeName,
+	}, ack))
+	if ack.acked != 1 || ack.nacked != 0 {
+		p.t.Fatalf("node-selected publish acks = %d, nacks = %d, want 1 ack and 0 nacks", ack.acked, ack.nacked)
+	}
+	return nil
 }
 
 func (a *ackRecorder) Ack(uint64, bool) error {
@@ -368,4 +400,50 @@ func TestHandleNodeSelectedAdmitsOpenStackToSlurmWithoutPolling(t *testing.T) {
 	}
 
 	t.Fatal("timed out waiting for node-selected event admission to acquire lease")
+}
+
+func TestRequestSwitchPublishesNodeSelectedAndAdmitsWithoutManualRMQClient(t *testing.T) {
+	s := store.NewMemoryStore()
+	runner := engine.NewRunner(s, nil)
+	orch := orchestrator.New(s, runner, nil, nil, nil, orchestrator.Config{
+		TickInterval:    10 * time.Millisecond,
+		SSHPollInterval: time.Second,
+		SSHPollTimeout:  time.Second,
+	}, nil)
+	consumer := NewConsumer(nil, s, nil, orch)
+	publisher := &serviceDrivenPublisher{t: t, consumer: consumer}
+	svc := service.NewSwitchService(s, nil, publisher)
+
+	execID, err := svc.RequestSwitch(context.Background(), service.SwitchRequest{
+		Direction:   domain.DirectionOpenStackToSlurm,
+		RequestedBy: "operator",
+		NodeName:    "gpu-05",
+	})
+	if err != nil {
+		t.Fatalf("RequestSwitch() error = %v", err)
+	}
+
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		lease, err := s.GetLease(context.Background(), "gpu-05")
+		if err == nil {
+			if lease.ExecutionID != execID {
+				t.Fatalf("lease.ExecutionID = %q, want %q", lease.ExecutionID, execID)
+			}
+			updated, getErr := s.GetExecution(context.Background(), execID)
+			if getErr != nil {
+				t.Fatalf("GetExecution() error = %v", getErr)
+			}
+			if updated.NodeName != "gpu-05" {
+				t.Fatalf("NodeName = %q, want gpu-05", updated.NodeName)
+			}
+			if updated.CurrentState == domain.StateAwaitingTargetNode {
+				t.Fatalf("CurrentState = %q, want admission beyond awaiting_target_node", updated.CurrentState)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	t.Fatal("timed out waiting for service-published node-selected event admission to acquire lease")
 }

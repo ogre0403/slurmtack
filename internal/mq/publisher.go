@@ -27,6 +27,13 @@ func (p *Publisher) PublishRequested(ctx context.Context, executionID string, di
 	})
 }
 
+func (p *Publisher) PublishNodeSelected(ctx context.Context, executionID, nodeName string) error {
+	return p.publish(ctx, NodeSelectedRoutingKey, NodeSelectedEvent{
+		ExecutionID: executionID,
+		NodeName:    nodeName,
+	})
+}
+
 func (p *Publisher) publish(ctx context.Context, routingKey string, message any) error {
 	body, err := json.Marshal(message)
 	if err != nil {

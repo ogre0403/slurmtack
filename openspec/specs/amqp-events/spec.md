@@ -58,7 +58,12 @@ The MQ consumer SHALL subscribe to the `gpu-switch.allocation` queue and process
 
 ### Requirement: Consume openstack_to_slurm node selection events
 
-The MQ consumer SHALL subscribe to the `gpu-switch.node-selected` queue and process messages with schema `{"execution_id": string, "node_name": string}`. On a valid message, it MUST bind the execution to the selected node and transition from `awaiting_target_node` to `node_identified`.
+The MQ consumer SHALL subscribe to the `gpu-switch.node-selected` queue and process messages with schema `{"execution_id": string, "node_name": string}`. For API-created `openstack_to_slurm` requests, the API/service path MUST publish this event immediately after execution persistence using the `node_name` supplied in `POST /v1/switches`. On a valid message, the consumer MUST bind the execution to the selected node and transition from `awaiting_target_node` to `node_identified`.
+
+#### Scenario: API publishes node selection after openstack_to_slurm persistence
+
+- **WHEN** the API accepts `POST /v1/switches` for `openstack_to_slurm` with `node_name` `gpu-01`
+- **THEN** the system persists the execution first and then publishes `execution.node_selected` with that execution ID and `node_name` `gpu-01`
 
 #### Scenario: Valid node selection event
 

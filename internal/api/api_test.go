@@ -116,7 +116,7 @@ func TestCreateSwitchWithSlurmPartition(t *testing.T) {
 func TestCreateOpenStackToSlurmStartsAwaitingTargetNode(t *testing.T) {
 	srv := setupTestServer(t)
 
-	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1"}`
+	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1","node_name":"gpu-01"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
 	req.Header.Set("Authorization", "Bearer test-token")
@@ -144,15 +144,15 @@ func TestCreateOpenStackToSlurmStartsAwaitingTargetNode(t *testing.T) {
 	if status.CurrentState != "awaiting_target_node" {
 		t.Fatalf("CurrentState = %q, want awaiting_target_node", status.CurrentState)
 	}
-	if status.NodeName != "" {
-		t.Fatalf("NodeName = %q, want empty string", status.NodeName)
+	if status.NodeName != "gpu-01" {
+		t.Fatalf("NodeName = %q, want gpu-01", status.NodeName)
 	}
 }
 
-func TestCreateOpenStackToSlurmRejectsNodeName(t *testing.T) {
+func TestCreateOpenStackToSlurmRejectsMissingNodeName(t *testing.T) {
 	srv := setupTestServer(t)
 
-	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1","node_name":"gpu-01"}`
+	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
 	req.Header.Set("Authorization", "Bearer test-token")

@@ -146,6 +146,7 @@ func TestOpenStackToSlurmFullFlow(t *testing.T) {
 	execID, err := svc.RequestSwitch(ctx, service.SwitchRequest{
 		Direction:   domain.DirectionOpenStackToSlurm,
 		RequestedBy: "test-operator",
+		NodeName:    "gpu-02",
 	})
 	if err != nil {
 		t.Fatalf("request switch: %v", err)
@@ -158,9 +159,8 @@ func TestOpenStackToSlurmFullFlow(t *testing.T) {
 	if exec.CurrentState != domain.StateAwaitingTargetNode {
 		t.Fatalf("expected awaiting_target_node, got %s", exec.CurrentState)
 	}
-	exec.NodeName = "gpu-02"
-	if err := s.UpdateExecution(ctx, exec); err != nil {
-		t.Fatalf("bind node from MQ: %v", err)
+	if exec.NodeName != "gpu-02" {
+		t.Fatalf("expected node gpu-02, got %s", exec.NodeName)
 	}
 	if err := runner.Transition(ctx, execID, domain.StateNodeIdentified); err != nil {
 		t.Fatalf("transition to node_identified: %v", err)
@@ -247,6 +247,7 @@ func TestOpenStackToSlurmPrecheckBlocksWithInstances(t *testing.T) {
 	execID, err := svc.RequestSwitch(ctx, service.SwitchRequest{
 		Direction:   domain.DirectionOpenStackToSlurm,
 		RequestedBy: "test-operator",
+		NodeName:    "gpu-03",
 	})
 	if err != nil {
 		t.Fatalf("request switch: %v", err)
@@ -256,9 +257,8 @@ func TestOpenStackToSlurmPrecheckBlocksWithInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get execution: %v", err)
 	}
-	exec.NodeName = "gpu-03"
-	if err := s.UpdateExecution(ctx, exec); err != nil {
-		t.Fatalf("bind node from MQ: %v", err)
+	if exec.NodeName != "gpu-03" {
+		t.Fatalf("expected node gpu-03, got %s", exec.NodeName)
 	}
 	if err := runner.Transition(ctx, execID, domain.StateNodeIdentified); err != nil {
 		t.Fatalf("transition to node_identified: %v", err)

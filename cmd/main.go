@@ -129,12 +129,12 @@ func main() {
 	// Start MQ consumer supervision.
 	mqConn := startMQ(ctx, &wg, cfg.AMQPURL, sqlStore, baseLogger, defaultMQStartupDeps.withIntakeHandler(orch))
 
-	var requestedPublisher service.RequestedEventPublisher
+	var publisher service.EventPublisher
 	if amqpConn, ok := mqConn.(*mq.Connection); ok {
-		requestedPublisher = mq.NewPublisher(amqpConn, baseLogger)
+		publisher = mq.NewPublisher(amqpConn, baseLogger)
 	}
 
-	svc := service.NewSwitchService(sqlStore, baseLogger, requestedPublisher)
+	svc := service.NewSwitchService(sqlStore, baseLogger, publisher)
 	srv := api.NewServer(cfg.ListenAddr, cfg.APIToken, sqlStore, svc)
 
 	wg.Add(1)
