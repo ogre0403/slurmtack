@@ -45,27 +45,22 @@ The agent SHALL discover its hostname via `os.Hostname()`, connect to RabbitMQ, 
 
 ### Requirement: Poll slurmrestd for drain state
 
-The agent SHALL poll `GET /slurm/v0.0.40/node/{hostname}` at the configured interval (default 5s) to check if the node has reached a drained state. Each poll request MUST include `X-SLURM-USER-NAME` and `X-SLURM-USER-TOKEN` headers derived from the configured workload Slurm identity. Drained states are: `drained`, `drained*`, `down`, `down*`.
+The agent SHALL poll `GET /slurm/v0.0.40/node/{hostname}` at the configured interval (default 5s) to check if the node has entered the Slurm drain state required for the switch handoff. Each poll request MUST include `X-SLURM-USER-NAME` and `X-SLURM-USER-TOKEN` headers derived from the configured workload Slurm identity. Drain completion MUST be determined from Slurm state tokens rather than exact full-string matches. The agent MUST treat `drain`, `drained`, `drained*`, `down`, and `down*` tokens as satisfying the drain wait even when they appear inside a composite state such as `MIXED+DRAIN`. The agent MUST NOT enforce an internal overall poll timeout; the placeholder job runtime MUST instead be governed by Slurm job control such as partition time limits, cancellation, or successful drain completion.
 
-#### Scenario: Node drains within timeout
+#### Scenario: Node drains within polling window
 
-- **WHEN** slurmrestd reports node state as "drained" during polling
+- **WHEN** slurmrestd reports node state as `drained` during polling
 - **THEN** agent proceeds to publish node_drained event
 
-#### Scenario: Node state is "drained*"
+#### Scenario: Composite drain state completes polling
 
-- **WHEN** slurmrestd reports node state as "drained*" (drain pending jobs complete)
-- **THEN** agent considers this as drained and proceeds
+- **WHEN** slurmrestd reports node state as `MIXED+DRAIN`
+- **THEN** agent considers the drain wait satisfied and proceeds to publish node_drained event
 
 #### Scenario: Poll request uses Slurm identity headers
 
 - **WHEN** agent issues a drain-state poll request
 - **THEN** the HTTP request targets the v0.0.40 node endpoint and includes `X-SLURM-USER-NAME: <configured-or-default-user>` and `X-SLURM-USER-TOKEN: <workload-token>`
-
-#### Scenario: Poll timeout exceeded
-
-- **WHEN** node does not reach drained state within POLL_TIMEOUT (default 30m)
-- **THEN** agent prints timeout error to stderr and exits with code 2
 
 #### Scenario: slurmrestd unreachable during poll
 
@@ -88,7 +83,7 @@ After confirming drain state, the agent SHALL publish a node_drained message wit
 
 ### Requirement: Exit codes
 
-The agent SHALL use specific exit codes to communicate outcome to Slurm and the daemon: 0 (success), 1 (startup failure), 2 (poll timeout), 3 (MQ publish failure).
+The agent SHALL use specific exit codes to communicate outcome to Slurm and the daemon: 0 (success), 1 (startup failure or local shutdown), and 3 (MQ publish failure). The agent MUST NOT emit a dedicated poll-timeout exit code because drain waiting is bounded by Slurm job policy rather than an internal deadline.
 
 #### Scenario: Successful completion
 
@@ -97,13 +92,13 @@ The agent SHALL use specific exit codes to communicate outcome to Slurm and the 
 
 #### Scenario: Startup failure
 
-- **WHEN** required env vars are missing or initial connections fail
+- **WHEN** required env vars are missing, initial connections fail, or the process is cancelled before completion
 - **THEN** agent exits with code 1
 
-#### Scenario: Drain timeout
+#### Scenario: MQ publish failure
 
-- **WHEN** poll loop exceeds POLL_TIMEOUT
-- **THEN** agent exits with code 2
+- **WHEN** allocation or drained event publishing cannot be confirmed after the documented retry path
+- **THEN** agent exits with code 3
 
 ### Requirement: Structured stdout logging
 

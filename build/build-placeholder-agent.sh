@@ -15,7 +15,7 @@ docker run --rm \
   -e CGO_ENABLED=0 \
   -e GOOS=linux \
   -e GOARCH=amd64 \
-  golang:1.22.4-alpine \
+  golang:1.25.10-alpine \
   go build -o /out/placeholder-agent ./cmd/placeholder-agent/
 
 echo "    Binary: $OUTPUT_DIR/placeholder-agent"

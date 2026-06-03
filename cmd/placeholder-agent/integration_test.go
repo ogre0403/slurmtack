@@ -32,7 +32,6 @@ func TestIntegration_AgentLifecycle(t *testing.T) {
 		"SLURM_API_URL="+slurmAPIURL,
 		"SLURM_JWT_TOKEN="+slurmJWT,
 		"POLL_INTERVAL=2s",
-		"POLL_TIMEOUT=5m",
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

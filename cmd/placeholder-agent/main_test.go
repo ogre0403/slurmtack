@@ -40,7 +40,6 @@ func TestLoadConfig_AllPresent(t *testing.T) {
 	t.Setenv("SLURM_JWT_TOKEN", "token")
 	t.Setenv("SLURM_JOB_ID", "12345")
 	t.Setenv("POLL_INTERVAL", "2s")
-	t.Setenv("POLL_TIMEOUT", "5m")
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -57,9 +56,6 @@ func TestLoadConfig_AllPresent(t *testing.T) {
 	}
 	if cfg.PollInterval != 2*time.Second {
 		t.Errorf("expected 2s, got %v", cfg.PollInterval)
-	}
-	if cfg.PollTimeout != 5*time.Minute {
-		t.Errorf("expected 5m, got %v", cfg.PollTimeout)
 	}
 	if cfg.SlurmAPIUser != "cloud-user" {
 		t.Errorf("expected default SlurmAPIUser=cloud-user, got %s", cfg.SlurmAPIUser)
@@ -120,7 +116,6 @@ func TestDiscoverHostname(t *testing.T) {
 	if h == "" {
 		t.Fatal("hostname should not be empty")
 	}
-	// Should not contain dots (domain stripped)
 	if len(h) > 0 && h[0] == '.' {
 		t.Errorf("hostname should not start with dot: %s", h)
 	}
@@ -148,7 +143,6 @@ func TestPollDrainLoop_DetectsDrained(t *testing.T) {
 		SlurmAPIURL:  server.URL,
 		SlurmJWT:     "test-token",
 		PollInterval: 10 * time.Millisecond,
-		PollTimeout:  5 * time.Second,
 	}
 	logger := newLogger("test-exec")
 	client := server.Client()
@@ -162,7 +156,7 @@ func TestPollDrainLoop_DetectsDrained(t *testing.T) {
 	}
 }
 
-func TestPollDrainLoop_Timeout(t *testing.T) {
+func TestPollDrainLoop_ContextCancelled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"nodes": []map[string]any{
@@ -176,14 +170,16 @@ func TestPollDrainLoop_Timeout(t *testing.T) {
 		SlurmAPIURL:  server.URL,
 		SlurmJWT:     "test-token",
 		PollInterval: 10 * time.Millisecond,
-		PollTimeout:  50 * time.Millisecond,
 	}
 	logger := newLogger("test-exec")
 	client := server.Client()
 
-	err := pollDrainLoop(context.Background(), client, cfg, "gpu-01", logger)
-	if err != errPollTimeout {
-		t.Fatalf("expected poll timeout, got: %v", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := pollDrainLoop(ctx, client, cfg, "gpu-01", logger)
+	if err == nil {
+		t.Fatal("expected error when context cancelled, got nil")
 	}
 }
 
@@ -207,7 +203,6 @@ func TestPollDrainLoop_TransientError(t *testing.T) {
 		SlurmAPIURL:  server.URL,
 		SlurmJWT:     "test-token",
 		PollInterval: 10 * time.Millisecond,
-		PollTimeout:  5 * time.Second,
 	}
 	logger := newLogger("test-exec")
 	client := server.Client()
@@ -221,22 +216,68 @@ func TestPollDrainLoop_TransientError(t *testing.T) {
 	}
 }
 
-func TestDrainedStates(t *testing.T) {
+func TestIsDrainComplete(t *testing.T) {
 	cases := []struct {
 		state    string
 		expected bool
 	}{
+		// simple terminal states
 		{"drained", true},
 		{"drained*", true},
 		{"down", true},
 		{"down*", true},
+		// composite states containing a drain token
+		{"MIXED+DRAIN", true},
+		{"mixed+drain", true},
+		{"ALLOCATED+DRAIN", true},
+		{"drained+drain", true},
+		{"down+drain", true},
+		// non-drain states
 		{"idle", false},
 		{"allocated", false},
 		{"draining", false},
+		{"MIXED", false},
 	}
 	for _, tc := range cases {
-		if drainedStates[tc.state] != tc.expected {
-			t.Errorf("drainedStates[%q] = %v, want %v", tc.state, drainedStates[tc.state], tc.expected)
+		got := isDrainComplete(tc.state)
+		if got != tc.expected {
+			t.Errorf("isDrainComplete(%q) = %v, want %v", tc.state, got, tc.expected)
 		}
+	}
+}
+
+// TestPollDrainLoop_MixedDrain is the regression test for slurm-14.out where the node
+// stayed in MIXED+DRAIN but the old exact-match check never completed the poll loop.
+func TestPollDrainLoop_MixedDrain(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var states []string
+		if calls < 3 {
+			states = []string{"MIXED"}
+		} else {
+			states = []string{"MIXED", "DRAIN"}
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"nodes": []map[string]any{
+				{"state": states},
+			},
+		})
+	}))
+	defer server.Close()
+
+	cfg := &agentConfig{
+		SlurmAPIURL:  server.URL,
+		SlurmJWT:     "test-token",
+		PollInterval: 10 * time.Millisecond,
+	}
+	logger := newLogger("test-exec")
+
+	err := pollDrainLoop(context.Background(), server.Client(), cfg, "gpu-01", logger)
+	if err != nil {
+		t.Fatalf("expected MIXED+DRAIN to complete poll loop, got error: %v", err)
+	}
+	if calls < 3 {
+		t.Errorf("expected at least 3 calls, got %d", calls)
 	}
 }

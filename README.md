@@ -375,6 +375,125 @@ MQ consumer 收到後，會把 execution 從 `source_quiescing` 推進到 `sourc
 
 如果你要先驗證狀態機與步驟順序，現有 repo 內最接近完整流程的參考是 [internal/engine/integration/switch_test.go](/workspaces/slurmtack/internal/engine/integration/switch_test.go)。
 
+### 10. 手動 smoke test: 直接用 Slurm 送 placeholder job，並檢查 MQ 是否收到事件
+
+如果你要測的只是「placeholder agent 能不能從 Slurm job 內成功 publish 到 RabbitMQ」，最簡單的方式是不要先走 API / execution 狀態機，而是直接手動 `sbatch`。這個 smoke test 只驗證 `placeholder-agent -> MQ` 這一段，所以 `EXECUTION_ID` 可以用任意測試字串。
+
+前提:
+
+- RabbitMQ 已啟動
+- daemon 至少啟動過一次，讓 `gpu-switch.events` exchange 與既有 queue topology 已宣告完成
+- `build/output/placeholder-agent.sif` 已建好，並放在 Slurm compute node 可讀的位置
+- 送 job 的 shell 已有可用的 `SLURM_JWT_TOKEN`
+
+先準備測試用環境變數:
+
+```bash
+export EXECUTION_ID="manual-placeholder-$(date +%Y%m%d%H%M%S)"
+export PLACEHOLDER_SIF_PATH=/shared/images/placeholder-agent.sif
+export AMQP_URL=amqp://guest:guest@127.0.0.1:5672/
+export SLURM_API_URL=http://slurm-head:6820
+export SLURM_JWT_TOKEN=replace-me
+export SLURM_API_USER=cloud-user
+```
+
+因為 daemon 自己也會 consume `gpu-switch.allocation` / `gpu-switch.drained`，要避免你在查 queue 時剛好被 daemon 吃掉，建議先額外建立兩個只給 smoke test 用的 probe queue:
+
+```bash
+curl -u guest:guest -H 'content-type: application/json' \
+	-X PUT http://127.0.0.1:15672/api/queues/%2F/probe.placeholder.allocation \
+	-d '{"durable":false,"auto_delete":true,"arguments":{}}'
+
+curl -u guest:guest -H 'content-type: application/json' \
+	-X PUT http://127.0.0.1:15672/api/queues/%2F/probe.placeholder.drained \
+	-d '{"durable":false,"auto_delete":true,"arguments":{}}'
+
+curl -u guest:guest -H 'content-type: application/json' \
+	-X POST http://127.0.0.1:15672/api/bindings/%2F/e/gpu-switch.events/q/probe.placeholder.allocation \
+	-d '{"routing_key":"execution.allocation","arguments":{}}'
+
+curl -u guest:guest -H 'content-type: application/json' \
+	-X POST http://127.0.0.1:15672/api/bindings/%2F/e/gpu-switch.events/q/probe.placeholder.drained \
+	-d '{"routing_key":"execution.drained","arguments":{}}'
+```
+
+接著直接送出 placeholder job:
+
+```bash
+sbatch \
+	--job-name="placeholder-smoke-${EXECUTION_ID}" \
+	--nodes=1 \
+	--ntasks=1 \
+	--exclusive=user \
+	--constraint=gpu-a100 \
+	--export=ALL,EXECUTION_ID="${EXECUTION_ID}",AMQP_URL="${AMQP_URL}",SLURM_API_URL="${SLURM_API_URL}",SLURM_JWT_TOKEN="${SLURM_JWT_TOKEN}",SLURM_API_USER="${SLURM_API_USER}",POLL_INTERVAL=5s \
+	--wrap="singularity run ${PLACEHOLDER_SIF_PATH}"
+```
+
+送出後先看 job 是否真的進到某台節點:
+
+```bash
+squeue -n "placeholder-smoke-${EXECUTION_ID}" -o "%.18i %.9T %.40N"
+```
+
+當 job 進入 `R` 後，placeholder agent 一啟動就會先發 `execution.allocation`。你可以用 RabbitMQ management API 把 probe queue 裡的訊息抓出來:
+
+```bash
+curl -u guest:guest -H 'content-type: application/json' \
+	-X POST http://127.0.0.1:15672/api/queues/%2F/probe.placeholder.allocation/get \
+	-d '{"count":10,"ackmode":"ack_requeue_false","encoding":"auto","truncate":50000}'
+```
+
+預期至少會看到一筆 JSON，body 內包含:
+
+```json
+{
+	"execution_id": "<your EXECUTION_ID>",
+	"job_id": "<slurm job id>",
+	"node_name": "<allocated node>"
+}
+```
+
+如果你還要繼續驗證 `execution.drained`，先從上一筆 allocation 訊息或 `squeue` 記下 `node_name`，然後手動把該節點 drain:
+
+```bash
+scontrol update NodeName=<allocated-node> State=DRAIN Reason=placeholder-smoke-test
+```
+
+placeholder agent 輪詢到 node 變成 `drained` / `down` 後，會再 publish 一筆 `execution.drained`。查法如下:
+
+```bash
+curl -u guest:guest -H 'content-type: application/json' \
+	-X POST http://127.0.0.1:15672/api/queues/%2F/probe.placeholder.drained/get \
+	-d '{"count":10,"ackmode":"ack_requeue_false","encoding":"auto","truncate":50000}'
+```
+
+預期 body 會長這樣:
+
+```json
+{
+	"execution_id": "<your EXECUTION_ID>",
+	"node_name": "<allocated node>"
+}
+```
+
+測完建議做 cleanup:
+
+```bash
+scancel <slurm-job-id>
+scontrol update NodeName=<allocated-node> State=RESUME
+curl -u guest:guest -X DELETE http://127.0.0.1:15672/api/queues/%2F/probe.placeholder.allocation
+curl -u guest:guest -X DELETE http://127.0.0.1:15672/api/queues/%2F/probe.placeholder.drained
+```
+
+如果 allocation queue 沒有看到訊息，優先檢查:
+
+- `singularity run ${PLACEHOLDER_SIF_PATH}` 是否真的能在 compute node 啟動
+- job environment 內是否真的帶到了 `AMQP_URL` / `SLURM_API_URL` / `SLURM_JWT_TOKEN`
+- RabbitMQ `guest:guest` 是否允許從該節點連線
+- `gpu-switch.events` exchange 是否已經被 daemon 宣告過
+
+
 ## 目前實作範圍
 
 依照目前程式碼，README 這份文件分成兩層:

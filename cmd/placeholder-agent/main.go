@@ -17,7 +17,6 @@ import (
 const (
 	exitSuccess        = 0
 	exitStartupFailure = 1
-	exitPollTimeout    = 2
 	exitMQFailure      = 3
 )
 
@@ -29,7 +28,6 @@ type agentConfig struct {
 	SlurmAPIUser string
 	SlurmJobID   string
 	PollInterval time.Duration
-	PollTimeout  time.Duration
 }
 
 func main() {
@@ -84,10 +82,6 @@ func main() {
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	if err := pollDrainLoop(ctx, client, cfg, hostname, logger); err != nil {
-		if err == errPollTimeout {
-			logger.Error("poll timeout: node did not reach drained state")
-			os.Exit(exitPollTimeout)
-		}
 		logger.Error(fmt.Sprintf("poll loop error: %v", err))
 		os.Exit(exitStartupFailure)
 	}
@@ -134,7 +128,6 @@ func loadConfig() (*agentConfig, error) {
 	}
 
 	pollInterval := parseDuration(os.Getenv("POLL_INTERVAL"), 5*time.Second)
-	pollTimeout := parseDuration(os.Getenv("POLL_TIMEOUT"), 30*time.Minute)
 
 	slurmAPIUser := os.Getenv("SLURM_API_USER")
 	if slurmAPIUser == "" {
@@ -149,7 +142,6 @@ func loadConfig() (*agentConfig, error) {
 		SlurmAPIUser: slurmAPIUser,
 		SlurmJobID:   os.Getenv("SLURM_JOB_ID"),
 		PollInterval: pollInterval,
-		PollTimeout:  pollTimeout,
 	}, nil
 }
 
@@ -241,17 +233,26 @@ func publishNodeDrainedEvent(ctx context.Context, ch *amqp.Channel, executionID,
 
 // Drain poll functions
 
-var errPollTimeout = fmt.Errorf("poll timeout")
-
-var drainedStates = map[string]bool{
+// drainTokens are the case-insensitive state tokens that indicate drain completion.
+var drainTokens = map[string]bool{
+	"drain":    true,
 	"drained":  true,
 	"drained*": true,
 	"down":     true,
 	"down*":    true,
 }
 
+// isDrainComplete returns true when the composite Slurm state string contains any drain token.
+func isDrainComplete(state string) bool {
+	for _, token := range strings.Split(state, "+") {
+		if drainTokens[strings.ToLower(token)] {
+			return true
+		}
+	}
+	return false
+}
+
 func pollDrainLoop(ctx context.Context, client *http.Client, cfg *agentConfig, hostname string, logger *logger) error {
-	deadline := time.After(cfg.PollTimeout)
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
 
@@ -259,8 +260,6 @@ func pollDrainLoop(ctx context.Context, client *http.Client, cfg *agentConfig, h
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-deadline:
-			return errPollTimeout
 		case <-ticker.C:
 			state, err := getNodeState(ctx, client, cfg, hostname)
 			if err != nil {
@@ -268,7 +267,7 @@ func pollDrainLoop(ctx context.Context, client *http.Client, cfg *agentConfig, h
 				continue
 			}
 			logger.Info(fmt.Sprintf("node state: %s", state))
-			if drainedStates[state] {
+			if isDrainComplete(state) {
 				return nil
 			}
 		}
