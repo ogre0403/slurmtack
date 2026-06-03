@@ -260,6 +260,31 @@ func TestRequestSwitchReturnsDependencyErrorWhenSlurmLookupFails(t *testing.T) {
 	}
 }
 
+func TestRequestSwitchRejectsSlurmToOpenStackWithNodeName(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil)
+
+	_, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:   domain.DirectionSlurmToOpenStack,
+		RequestedBy: "operator-1",
+		NodeName:    "gpu-01",
+	})
+	if !errors.Is(err, ErrInvalidSwitchRequest) {
+		t.Fatalf("RequestSwitch() error = %v, want ErrInvalidSwitchRequest", err)
+	}
+	if !strings.Contains(err.Error(), "node_name is not accepted for slurm_to_openstack") {
+		t.Fatalf("RequestSwitch() error = %q, want node_name rejection message", err.Error())
+	}
+
+	executions, listErr := s.ListExecutions(context.Background(), "")
+	if listErr != nil {
+		t.Fatalf("ListExecutions() error = %v", listErr)
+	}
+	if len(executions) != 0 {
+		t.Fatalf("execution count = %d, want 0", len(executions))
+	}
+}
+
 func TestRequestSwitchPublishesRequestedEventAfterPersistence(t *testing.T) {
 	s := store.NewMemoryStore()
 	publisher := &recordingEventPublisher{store: s}

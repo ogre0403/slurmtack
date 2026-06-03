@@ -347,7 +347,7 @@ func TestGetSwitch(t *testing.T) {
 	srv := setupTestServer(t)
 
 	// Create one first
-	body := `{"direction":"slurm_to_openstack","requested_by":"op","node_name":"gpu-01"}`
+	body := `{"direction":"slurm_to_openstack","requested_by":"op","slurm_constraint":"gpu-a100"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
 	req.Header.Set("Authorization", "Bearer test-token")
@@ -368,8 +368,29 @@ func TestGetSwitch(t *testing.T) {
 	}
 	var status ExecutionStatus
 	json.Unmarshal(w.Body.Bytes(), &status)
-	if status.NodeName != "gpu-01" || status.Direction != "slurm_to_openstack" {
+	if status.NodeName != "" || status.Direction != "slurm_to_openstack" {
 		t.Fatalf("unexpected status: %+v", status)
+	}
+}
+
+func TestCreateSlurmToOpenStackRejectsNodeName(t *testing.T) {
+	srv := setupTestServer(t)
+
+	body := `{"direction":"slurm_to_openstack","requested_by":"operator-1","node_name":"gpu-01"}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp ErrorResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if !strings.Contains(resp.Error, "node_name is not accepted for slurm_to_openstack") {
+		t.Fatalf("unexpected error response: %+v", resp)
 	}
 }
 
@@ -389,9 +410,9 @@ func TestGetSwitchNotFound(t *testing.T) {
 func TestListSwitches(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create two
+	// Create two node-bound executions using openstack_to_slurm (which requires node_name)
 	for _, node := range []string{"gpu-01", "gpu-02"} {
-		body := `{"direction":"slurm_to_openstack","requested_by":"op","node_name":"` + node + `"}`
+		body := `{"direction":"openstack_to_slurm","requested_by":"op","node_name":"` + node + `"}`
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
 		req.Header.Set("Authorization", "Bearer test-token")
@@ -455,7 +476,7 @@ func TestAccessLogSuccessfulV1Request(t *testing.T) {
 	srv := setupTestServerWithLogger(t, logger)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodPost, "/v1/switches", bytes.NewBufferString(`{"direction":"slurm_to_openstack","requested_by":"operator-1","node_name":"gpu-01"}`))
+	req, _ := http.NewRequest(http.MethodPost, "/v1/switches", bytes.NewBufferString(`{"direction":"slurm_to_openstack","requested_by":"operator-1","slurm_constraint":"gpu-a100"}`))
 	req.Header.Set("Authorization", "Bearer test-token")
 	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "192.0.2.50:1234"

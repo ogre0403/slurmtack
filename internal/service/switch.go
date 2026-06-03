@@ -62,6 +62,9 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 	nodeName := req.NodeName
 	switch req.Direction {
 	case domain.DirectionSlurmToOpenStack:
+		if req.NodeName != "" {
+			return "", fmt.Errorf("%w: node_name is not accepted for slurm_to_openstack", ErrInvalidSwitchRequest)
+		}
 		desired = domain.OwnerOpenStack
 		previous = domain.OwnerSlurm
 	case domain.DirectionOpenStackToSlurm:

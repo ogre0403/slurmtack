@@ -4,7 +4,7 @@ Define REST API requirements for creating, tracking, listing, and authenticating
 ## Requirements
 ### Requirement: Request a node switch
 
-The system SHALL accept a switch request via `POST /v1/switches` and return a 202 response with an execution ID and status URL. The request body MUST include `direction` and `requested_by`. For `slurm_to_openstack`, the request MAY include `slurm_constraint` and `slurm_partition`. For `openstack_to_slurm`, the request MUST include `node_name`; before persisting an execution, the system MUST inspect the target node's current Slurm state and reject the request when that state already indicates active Slurm ownership. Accepted `openstack_to_slurm` requests MUST persist the execution in `awaiting_target_node` and use the supplied node to publish the MQ node-selection signal that continues the workflow.
+The system SHALL accept a switch request via `POST /v1/switches` and return a 202 response with an execution ID and status URL. The request body MUST include `direction` and `requested_by`. For `slurm_to_openstack`, the request MAY include `slurm_constraint` and `slurm_partition` and MUST NOT include `node_name`. For `openstack_to_slurm`, the request MUST include `node_name`; before persisting an execution, the system MUST inspect the target node's current Slurm state and reject the request when that state already indicates active Slurm ownership. Accepted `openstack_to_slurm` requests MUST persist the execution in `awaiting_target_node` and use the supplied node to publish the MQ node-selection signal that continues the workflow.
 
 #### Scenario: Successful slurm_to_openstack request with explicit partition
 
@@ -15,6 +15,11 @@ The system SHALL accept a switch request via `POST /v1/switches` and return a 20
 
 - **WHEN** client sends `POST /v1/switches` with `{"direction": "slurm_to_openstack", "requested_by": "operator-1", "slurm_constraint": "gpu-a100"}`
 - **THEN** system returns HTTP 202 with body `{"execution_id": "<id>", "status_url": "/v1/switches/<id>"}`
+
+#### Scenario: Slurm_to_openstack request rejects request-time node_name
+
+- **WHEN** client sends `POST /v1/switches` with `{"direction": "slurm_to_openstack", "requested_by": "operator-1", "node_name": "gpu-01"}`
+- **THEN** system returns HTTP 400 with an error indicating that `node_name` is not accepted for `slurm_to_openstack`
 
 #### Scenario: Successful openstack_to_slurm request with node name
 
