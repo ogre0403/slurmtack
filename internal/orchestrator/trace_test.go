@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -204,10 +205,16 @@ func TestOrchestratorEmitsExecutionCompleted(t *testing.T) {
 	if completed.Attrs["execution_id"] != "trace-orch-2" {
 		t.Errorf("execution.completed: execution_id = %q, want %q", completed.Attrs["execution_id"], "trace-orch-2")
 	}
+	if completed.Attrs["current_state"] != string(domain.StateCompleted) {
+		t.Errorf("execution.completed: current_state = %q, want %q", completed.Attrs["current_state"], string(domain.StateCompleted))
+	}
 
 	// State should be completed in the store
 	updated, _ := s.GetExecution(ctx, "trace-orch-2")
 	if updated.CurrentState != domain.StateCompleted {
 		t.Errorf("expected state %s, got %s", domain.StateCompleted, updated.CurrentState)
+	}
+	if completed.Attrs["state_version"] != strconv.FormatInt(updated.StateVersion, 10) {
+		t.Errorf("execution.completed: state_version = %v, want %v", completed.Attrs["state_version"], updated.StateVersion)
 	}
 }

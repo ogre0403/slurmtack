@@ -682,7 +682,13 @@ func (o *Orchestrator) doComplete(ctx context.Context, exec *domain.Execution) e
 		return err
 	}
 
-	trace.ForExecution(o.logger, exec).Info(trace.EventExecutionCompleted, "action", "complete")
+	// Re-read execution from store to get the updated state and version
+	fresh, err := o.store.GetExecution(ctx, exec.ID)
+	if err != nil {
+		return fmt.Errorf("re-reading execution: %w", err)
+	}
+
+	trace.ForExecution(o.logger, fresh).Info(trace.EventExecutionCompleted, "action", "complete")
 	return nil
 }
 
@@ -759,7 +765,7 @@ func (o *Orchestrator) doCancelCleanup(ctx context.Context, exec *domain.Executi
 		return fmt.Errorf("recording cancellation outcome: %w", err)
 	}
 
-	execLog.Info("cancel.execution_cancelled",
+	trace.ForExecution(o.logger, fresh).Info("cancel.execution_cancelled",
 		"source_state", string(src),
 		"final_error_code", "cancelled_by_user",
 	)
