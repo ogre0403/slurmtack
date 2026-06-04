@@ -2,12 +2,11 @@ services:
   slurmtack:
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
     network_mode: host
     env_file: .env
     volumes:
-      - slurmtack-data:/data
-      - ../build/output/placeholder-agent.sif:/data/placeholder-agent.sif:ro
+      - .:/data
       - ${HOME}/.ssh/id_rsa:/run/secrets/slurmtack-ssh-key:ro
     restart: unless-stopped
 
@@ -16,5 +15,3 @@ services:
     network_mode: host
     restart: unless-stopped
 
-volumes:
-  slurmtack-data:
