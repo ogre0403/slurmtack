@@ -182,7 +182,8 @@ func isPreMutation(state domain.SwitchState) bool {
 		domain.StateNodeIdentified,
 		domain.StateLocked,
 		domain.StatePrecheckPassed,
-		domain.StateSourceQuiescing:
+		domain.StateSourceQuiescing,
+		domain.StateCancelling:
 		return true
 	}
 	return false

@@ -21,11 +21,13 @@ const (
 	StateFailedNeedsRollback      SwitchState = "failed_needs_rollback"
 	StateFailedManualRecovery     SwitchState = "failed_manual_recovery"
 	StateCompensating             SwitchState = "compensating"
+	StateCancelling               SwitchState = "cancelling"
+	StateCancelled                SwitchState = "cancelled"
 )
 
 func (s SwitchState) IsTerminal() bool {
 	switch s {
-	case StateCompleted, StateFailedNonDestructive, StateFailedNeedsRollback, StateFailedManualRecovery:
+	case StateCompleted, StateFailedNonDestructive, StateFailedNeedsRollback, StateFailedManualRecovery, StateCancelled:
 		return true
 	}
 	return false

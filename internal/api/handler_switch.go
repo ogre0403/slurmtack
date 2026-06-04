@@ -107,5 +107,22 @@ func (h *SwitchHandler) List(c *gin.Context) {
 }
 
 func (h *SwitchHandler) Cancel(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, ErrorResponse{Error: "not implemented"})
+	id := c.Param("id")
+	err := h.svc.CancelSwitch(c.Request.Context(), id)
+	if err == nil {
+		c.JSON(http.StatusAccepted, SwitchResponse{
+			ExecutionID: id,
+			StatusURL:   "/v1/switches/" + id,
+		})
+		return
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "execution not found"})
+		return
+	}
+	if errors.Is(err, service.ErrCancelNotAllowed) {
+		c.JSON(http.StatusConflict, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 }

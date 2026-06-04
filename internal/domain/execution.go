@@ -18,8 +18,9 @@ type Execution struct {
 	FinalErrorCode           string
 	FinalErrorSummary        string
 	LogRoot                  string
-	PlaceholderJobID         string
-	RequestedSlurmConstraint string
-	RequestedSlurmPartition  string
-	AllocationEventAt        *time.Time
+	PlaceholderJobID          string
+	RequestedSlurmConstraint  string
+	RequestedSlurmPartition   string
+	AllocationEventAt         *time.Time
+	CancellationSourceState   SwitchState
 }

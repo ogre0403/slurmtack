@@ -135,7 +135,7 @@ func main() {
 		publisher = mq.NewPublisher(amqpConn, baseLogger)
 	}
 
-	svc := service.NewSwitchService(sqlStore, baseLogger, publisher)
+	svc := service.NewSwitchService(sqlStore, baseLogger, publisher).WithExecutionIntake(orch)
 	if slurmClient != nil {
 		svc = svc.WithSlurmNodeStateReader(slurmClient)
 	}

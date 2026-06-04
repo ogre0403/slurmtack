@@ -34,6 +34,7 @@ type Orchestrator struct {
 	logger    *slog.Logger
 	mu        sync.Mutex
 	workers   map[string]struct{}
+	runCtx    context.Context
 }
 
 const slurmdCommandTimeout = 30 * time.Second
@@ -52,18 +53,35 @@ func New(s store.Store, runner *engine.Runner, sshRunner remote.Runner, slurmCli
 }
 
 func (o *Orchestrator) Run(ctx context.Context) {
+	o.mu.Lock()
+	o.runCtx = ctx
+	o.mu.Unlock()
 	o.recoverActiveExecutions(ctx)
 	<-ctx.Done()
 }
 
 func (o *Orchestrator) AdmitExecution(ctx context.Context, executionID string) {
-	if ctx.Err() != nil || executionID == "" {
+	if executionID == "" {
+		return
+	}
+	o.mu.Lock()
+	runCtx := o.runCtx
+	o.mu.Unlock()
+	// Prefer the long-lived Run context so the worker is not tied to a
+	// short-lived caller context (e.g. an HTTP request that returns 202).
+	workerCtx := ctx
+	if runCtx != nil {
+		if runCtx.Err() != nil {
+			return
+		}
+		workerCtx = runCtx
+	} else if ctx.Err() != nil {
 		return
 	}
 	if !o.startWorker(executionID) {
 		return
 	}
-	go o.runExecution(ctx, executionID)
+	go o.runExecution(workerCtx, executionID)
 }
 
 func (o *Orchestrator) recoverActiveExecutions(ctx context.Context) {
@@ -206,7 +224,8 @@ func (o *Orchestrator) shouldRecover(exec *domain.Execution) bool {
 		domain.StateRebooting,
 		domain.StateHostReachable,
 		domain.StateTargetAttaching,
-		domain.StateVerifying:
+		domain.StateVerifying,
+		domain.StateCancelling:
 		return true
 	case domain.StateSourceQuiescing:
 		return exec.Direction == domain.DirectionOpenStackToSlurm
@@ -241,6 +260,8 @@ func actionName(a action) string {
 		return "verify"
 	case actionComplete:
 		return "complete"
+	case actionCancelCleanup:
+		return "cancel_cleanup"
 	}
 	return "unknown"
 }
@@ -266,7 +287,11 @@ func (o *Orchestrator) processExecution(ctx context.Context, exec *domain.Execut
 
 	execLog.Warn(trace.EventActionFailed, "action", actionName(action), "error", err.Error())
 	failClass := classifyFailure(exec.CurrentState)
-	if failErr := o.runner.FailExecution(ctx, exec.ID, failClass, "step_error", err.Error()); failErr != nil {
+	errCode := "step_error"
+	if exec.CurrentState == domain.StateCancelling {
+		errCode = "cancel_cleanup_failed"
+	}
+	if failErr := o.runner.FailExecution(ctx, exec.ID, failClass, errCode, err.Error()); failErr != nil {
 		execLog.Warn("orchestrator.fail_execution_error", "error", failErr.Error())
 	}
 }
@@ -287,9 +312,13 @@ const (
 	actionAttach
 	actionVerify
 	actionComplete
+	actionCancelCleanup
 )
 
 func (o *Orchestrator) determineAction(exec *domain.Execution) action {
+	if exec.CurrentState == domain.StateCancelling {
+		return actionCancelCleanup
+	}
 	switch exec.Direction {
 	case domain.DirectionSlurmToOpenStack:
 		return o.determineS2O(exec)
@@ -392,6 +421,8 @@ func (o *Orchestrator) executeAction(ctx context.Context, exec *domain.Execution
 		return o.doVerify(ctx, exec)
 	case actionComplete:
 		return o.doComplete(ctx, exec)
+	case actionCancelCleanup:
+		return o.doCancelCleanup(ctx, exec)
 	}
 	return nil
 }
@@ -655,6 +686,86 @@ func (o *Orchestrator) doComplete(ctx context.Context, exec *domain.Execution) e
 	return nil
 }
 
+func (o *Orchestrator) doCancelCleanup(ctx context.Context, exec *domain.Execution) error {
+	src := exec.CancellationSourceState
+	execLog := trace.ForExecution(o.logger, exec)
+	execLog.Info("cancel.cleanup_started",
+		"source_state", string(src),
+		"direction", string(exec.Direction),
+	)
+
+	switch src {
+	case domain.StateAwaitingTargetNode:
+		// No external cleanup needed.
+
+	case domain.StateAwaitingSourceAllocation:
+		if exec.PlaceholderJobID != "" {
+			if o.slurm == nil {
+				return errors.New("slurm client not configured")
+			}
+			if err := o.slurm.CancelJob(ctx, exec.PlaceholderJobID); err != nil {
+				return fmt.Errorf("cancelling placeholder job %s: %w", exec.PlaceholderJobID, err)
+			}
+		}
+
+	case domain.StateSourceQuiescing:
+		switch exec.Direction {
+		case domain.DirectionSlurmToOpenStack:
+			if o.slurm == nil {
+				return errors.New("slurm client not configured")
+			}
+			if err := o.slurm.ResumeNode(ctx, exec.NodeName); err != nil {
+				return fmt.Errorf("resuming slurm node: %w", err)
+			}
+			if exec.PlaceholderJobID != "" {
+				if err := o.slurm.CancelJob(ctx, exec.PlaceholderJobID); err != nil {
+					return fmt.Errorf("cancelling placeholder job %s: %w", exec.PlaceholderJobID, err)
+				}
+			}
+			if err := o.store.ReleaseLease(ctx, exec.NodeName, exec.ID); err != nil && !errors.Is(err, store.ErrLeaseNotHeld) {
+				return fmt.Errorf("releasing lease: %w", err)
+			}
+
+		case domain.DirectionOpenStackToSlurm:
+			if o.openstack == nil {
+				return errors.New("openstack client not configured")
+			}
+			if err := o.openstack.EnableComputeService(ctx, exec.NodeName); err != nil {
+				return fmt.Errorf("re-enabling openstack compute service: %w", err)
+			}
+			if err := o.store.ReleaseLease(ctx, exec.NodeName, exec.ID); err != nil && !errors.Is(err, store.ErrLeaseNotHeld) {
+				return fmt.Errorf("releasing lease: %w", err)
+			}
+		}
+
+	default:
+		return fmt.Errorf("unknown cancellation source state: %s", src)
+	}
+
+	execLog.Info("cancel.cleanup_succeeded", "source_state", string(src))
+
+	if err := o.runner.Transition(ctx, exec.ID, domain.StateCancelled); err != nil {
+		return fmt.Errorf("transitioning to cancelled: %w", err)
+	}
+
+	// Re-read to get updated version for error details
+	fresh, err := o.store.GetExecution(ctx, exec.ID)
+	if err != nil {
+		return fmt.Errorf("re-reading execution after cancel: %w", err)
+	}
+	fresh.FinalErrorCode = "cancelled_by_user"
+	fresh.FinalErrorSummary = fmt.Sprintf("execution cancelled while in %s", string(src))
+	if err := o.store.UpdateExecution(ctx, fresh); err != nil {
+		return fmt.Errorf("recording cancellation outcome: %w", err)
+	}
+
+	execLog.Info("cancel.execution_cancelled",
+		"source_state", string(src),
+		"final_error_code", "cancelled_by_user",
+	)
+	return nil
+}
+
 func classifyFailure(state domain.SwitchState) domain.FailureClass {
 	switch state {
 	case domain.StateRebooting:
@@ -666,6 +777,8 @@ func classifyFailure(state domain.SwitchState) domain.FailureClass {
 		domain.StateLocked,
 		domain.StatePrecheckPassed,
 		domain.StateSourceQuiescing:
+		return domain.FailurePrecheckBlocked
+	case domain.StateCancelling:
 		return domain.FailurePrecheckBlocked
 	default:
 		return domain.FailureMutationPartial

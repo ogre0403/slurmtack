@@ -82,21 +82,24 @@ The sequence diagram should not be the source of truth. The source of truth is t
 
 1. `requested`
 2. `awaiting_source_allocation`
-3. `node_identified`
-4. `locked`
-5. `precheck_passed`
-6. `source_quiescing`
-7. `source_detached`
-8. `host_reconfiguring`
-9. `rebooting`
-10. `host_reachable`
-11. `target_attaching`
-12. `verifying`
-13. `completed`
-14. `failed_non_destructive`
-15. `failed_needs_rollback`
-16. `failed_manual_recovery`
-17. `compensating`
+3. `awaiting_target_node`
+4. `node_identified`
+5. `locked`
+6. `precheck_passed`
+7. `source_quiescing`
+8. `source_detached`
+9. `host_reconfiguring`
+10. `rebooting`
+11. `host_reachable`
+12. `target_attaching`
+13. `verifying`
+14. `completed`
+15. `failed_non_destructive`
+16. `failed_needs_rollback`
+17. `failed_manual_recovery`
+18. `compensating`
+19. `cancelling`
+20. `cancelled`
 
 ### State Semantics
 
@@ -104,36 +107,69 @@ The sequence diagram should not be the source of truth. The source of truth is t
     The user request is accepted but no mutation has started.
 2. `awaiting_source_allocation`
     The daemon is waiting for Slurm to allocate an exclusive placeholder job and reveal which node will be switched.
-3. `node_identified`
+3. `awaiting_target_node`
+    The execution is waiting for the MQ-driven node-selection event to bind the request to a specific node (openstack_to_slurm only).
+4. `node_identified`
     Slurm has returned the allocated node and the execution is now bound to that node.
-4. `locked`
+5. `locked`
     The daemon has exclusive ownership of the node transition.
-5. `precheck_passed`
+6. `precheck_passed`
     Source and target safety checks passed.
-6. `source_quiescing`
+7. `source_quiescing`
     The current owner is being drained or disabled.
-7. `source_detached`
+8. `source_detached`
     The source control plane no longer owns the node.
-8. `host_reconfiguring`
+9. `host_reconfiguring`
     Host-local configuration is changing, such as stopping services or changing GPU mode.
-9. `rebooting`
+10. `rebooting`
     A reboot was intentionally triggered and loss of SSH is expected.
-10. `host_reachable`
+11. `host_reachable`
     The host is back, reachable, and boot identity changed.
-11. `target_attaching`
+12. `target_attaching`
     The target control plane is being enabled.
-12. `verifying`
+13. `verifying`
     End-to-end readiness checks are running.
-13. `completed`
+14. `completed`
     Desired owner and observed owner match and all verification checks passed.
-14. `failed_non_destructive`
+15. `failed_non_destructive`
     The workflow failed before ownership changed.
-15. `failed_needs_rollback`
+16. `failed_needs_rollback`
     The workflow failed after mutations and automatic rollback is still possible.
-16. `failed_manual_recovery`
+17. `failed_manual_recovery`
     The host or control plane is left in a partial state that requires operator intervention.
-17. `compensating`
+18. `compensating`
     The daemon is executing rollback or cleanup actions.
+19. `cancelling`
+    An operator cancel was accepted; the daemon is performing the direction- and state-specific cleanup before finalizing. The original wait state is recorded as `cancellation_source_state`.
+20. `cancelled`
+    Cancellation cleanup completed successfully. `overall_status` is `failed` and `final_error_code` is `cancelled_by_user`.
+
+### Safe Cancellation Window
+
+Operator cancellation (`POST /v1/switches/:id/cancel`) is accepted only from these wait states:
+
+| State | Both directions |
+|---|---|
+| `awaiting_target_node` | Yes |
+| `awaiting_source_allocation` | Yes |
+| `source_quiescing` | Yes |
+
+All other active states reject cancellation with HTTP 409. These states represent post-detach host mutation or post-reboot recovery where "cancel" would require a real rollback, not just stopping a wait.
+
+Cancellation is idempotent: if an execution is already in `cancelling` or `cancelled`, the endpoint returns HTTP 202 without changing anything.
+
+### Cancellation Cleanup Plans
+
+After the execution enters `cancelling`, the orchestrator runs the appropriate cleanup action based on `cancellation_source_state` and `direction`:
+
+| Source State | Direction | Cleanup |
+|---|---|---|
+| `awaiting_target_node` | any | No external cleanup; transition directly to `cancelled`. |
+| `awaiting_source_allocation` | any | Cancel the placeholder Slurm job (if `placeholder_job_id` is set). |
+| `source_quiescing` | `slurm_to_openstack` | Resume the Slurm node, cancel the placeholder job if present, release node lease. |
+| `source_quiescing` | `openstack_to_slurm` | Re-enable the OpenStack compute service, release node lease. |
+
+If cleanup fails, the execution transitions to `failed_non_destructive` with `final_error_code=cancel_cleanup_failed`.
 
 ## Precheck Requirements
 

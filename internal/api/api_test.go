@@ -458,7 +458,7 @@ func TestListSwitches(t *testing.T) {
 	}
 }
 
-func TestCancelStub(t *testing.T) {
+func TestCancelUnknownID(t *testing.T) {
 	srv := setupTestServer(t)
 
 	w := httptest.NewRecorder()
@@ -466,8 +466,8 @@ func TestCancelStub(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer test-token")
 	srv.Engine().ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotImplemented {
-		t.Fatalf("expected 501, got %d", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown execution, got %d", w.Code)
 	}
 }
 

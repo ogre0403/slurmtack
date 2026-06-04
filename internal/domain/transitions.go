@@ -2,12 +2,12 @@ package domain
 
 var allowedTransitions = map[SwitchState][]SwitchState{
 	StateRequested:                {StateAwaitingSourceAllocation, StateAwaitingTargetNode, StateNodeIdentified, StateLocked, StateFailedNonDestructive},
-	StateAwaitingSourceAllocation: {StateNodeIdentified, StateFailedNonDestructive},
-	StateAwaitingTargetNode:       {StateNodeIdentified, StateFailedNonDestructive},
+	StateAwaitingSourceAllocation: {StateNodeIdentified, StateFailedNonDestructive, StateCancelling},
+	StateAwaitingTargetNode:       {StateNodeIdentified, StateFailedNonDestructive, StateCancelling},
 	StateNodeIdentified:           {StateLocked, StateFailedNonDestructive},
 	StateLocked:                   {StatePrecheckPassed, StateFailedNonDestructive},
 	StatePrecheckPassed:           {StateSourceQuiescing, StateFailedNonDestructive},
-	StateSourceQuiescing:          {StateSourceDetached, StateFailedNonDestructive, StateFailedNeedsRollback},
+	StateSourceQuiescing:          {StateSourceDetached, StateFailedNonDestructive, StateFailedNeedsRollback, StateCancelling},
 	StateSourceDetached:           {StateHostReconfiguring, StateFailedNeedsRollback, StateCompensating},
 	StateHostReconfiguring:        {StateRebooting, StateTargetAttaching, StateFailedNeedsRollback, StateCompensating},
 	StateRebooting:                {StateHostReachable, StateFailedManualRecovery},
@@ -15,6 +15,7 @@ var allowedTransitions = map[SwitchState][]SwitchState{
 	StateTargetAttaching:          {StateVerifying, StateFailedNeedsRollback, StateCompensating},
 	StateVerifying:                {StateCompleted, StateFailedNeedsRollback, StateCompensating},
 	StateCompensating:             {StateCompleted, StateFailedNeedsRollback, StateFailedManualRecovery},
+	StateCancelling:               {StateCancelled, StateFailedNonDestructive},
 }
 
 func IsValidTransition(from, to SwitchState) bool {

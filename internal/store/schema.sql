@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS executions (
     placeholder_job_id TEXT NOT NULL DEFAULT '',
     requested_slurm_constraint TEXT NOT NULL DEFAULT '',
     requested_slurm_partition TEXT NOT NULL DEFAULT '',
-    allocation_event_at DATETIME
+    allocation_event_at DATETIME,
+    cancellation_source_state TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS steps (

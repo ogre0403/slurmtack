@@ -105,15 +105,19 @@ func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJo
 	script += fmt.Sprintf("echo \"SIF path: %s\"\n", c.placeholderSIFPath)
 	script += fmt.Sprintf("singularity run %s\n", c.placeholderSIFPath)
 
+	job := map[string]any{
+		"name":                      fmt.Sprintf("gpu-switch-%s", req.ExecutionID),
+		"environment":               map[string]string{"PATH": "/bin:/usr/bin:/usr/local/bin"},
+		"current_working_directory": "/tmp",
+		"standard_output":           fmt.Sprintf("/tmp/gpu-switch-%s.out", req.ExecutionID),
+		"standard_error":            fmt.Sprintf("/tmp/gpu-switch-%s.err", req.ExecutionID),
+	}
+	if req.Partition != "" {
+		job["partition"] = req.Partition
+	}
 	body := map[string]any{
 		"script": script,
-		"job": map[string]any{
-			"name":                      fmt.Sprintf("gpu-switch-%s", req.ExecutionID),
-			"environment":               map[string]string{"PATH": "/bin:/usr/bin:/usr/local/bin"},
-			"current_working_directory": "/tmp",
-			"standard_output":           fmt.Sprintf("/tmp/gpu-switch-%s.out", req.ExecutionID),
-			"standard_error":            fmt.Sprintf("/tmp/gpu-switch-%s.err", req.ExecutionID),
-		},
+		"job":    job,
 	}
 
 	resp, err := c.doJSON(ctx, http.MethodPost, "/slurm/v0.0.40/job/submit", body)

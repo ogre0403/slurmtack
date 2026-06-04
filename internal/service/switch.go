@@ -27,6 +27,8 @@ var ErrInvalidSwitchRequest = errors.New("invalid switch request")
 
 var ErrSwitchRequestDependency = errors.New("switch request dependency failure")
 
+var ErrCancelNotAllowed = errors.New("cancellation not allowed in current state")
+
 type EventPublisher interface {
 	PublishRequested(ctx context.Context, executionID string, direction domain.SwitchDirection) error
 	PublishNodeSelected(ctx context.Context, executionID, nodeName string) error
@@ -36,9 +38,14 @@ type SlurmNodeStateReader interface {
 	GetNodeState(ctx context.Context, nodeName string) (*slurm.NodeState, error)
 }
 
+type ExecutionIntake interface {
+	AdmitExecution(ctx context.Context, executionID string)
+}
+
 type SwitchService struct {
 	store                store.Store
 	publisher            EventPublisher
+	intake               ExecutionIntake
 	logger               *slog.Logger
 	slurmNodeStateReader SlurmNodeStateReader
 }
@@ -49,6 +56,11 @@ func NewSwitchService(s store.Store, logger *slog.Logger, publishers ...EventPub
 		publisher = publishers[0]
 	}
 	return &SwitchService{store: s, publisher: publisher, logger: trace.OrDefault(logger)}
+}
+
+func (s *SwitchService) WithExecutionIntake(intake ExecutionIntake) *SwitchService {
+	s.intake = intake
+	return s
 }
 
 func (s *SwitchService) WithSlurmNodeStateReader(reader SlurmNodeStateReader) *SwitchService {
@@ -185,6 +197,57 @@ func (s *SwitchService) GetStatus(ctx context.Context, executionID string) (*Exe
 		ErrorCode:     exec.FinalErrorCode,
 		ErrorSummary:  exec.FinalErrorSummary,
 	}, nil
+}
+
+var cancellableStates = map[domain.SwitchState]bool{
+	domain.StateAwaitingTargetNode:       true,
+	domain.StateAwaitingSourceAllocation: true,
+	domain.StateSourceQuiescing:          true,
+}
+
+// CancelSwitch attempts to claim an execution for cancellation.
+// Returns the execution ID if accepted (202), ErrNotFound if not found,
+// or ErrCancelNotAllowed if the current state is not cancellable.
+func (s *SwitchService) CancelSwitch(ctx context.Context, executionID string) error {
+	exec, err := s.store.GetExecution(ctx, executionID)
+	if err != nil {
+		return err
+	}
+
+	// Idempotent: already claimed or finished
+	if exec.CurrentState == domain.StateCancelling || exec.CurrentState == domain.StateCancelled {
+		return nil
+	}
+
+	if !cancellableStates[exec.CurrentState] {
+		return fmt.Errorf("%w: %s", ErrCancelNotAllowed, exec.CurrentState)
+	}
+
+	// Persist the source state before transitioning
+	exec.CancellationSourceState = exec.CurrentState
+	if err := s.store.UpdateExecution(ctx, exec); err != nil {
+		return fmt.Errorf("recording cancellation source state: %w", err)
+	}
+
+	// Re-read to get the latest state_version after UpdateExecution
+	exec, err = s.store.GetExecution(ctx, executionID)
+	if err != nil {
+		return fmt.Errorf("re-reading execution: %w", err)
+	}
+
+	if err := s.store.AdvanceState(ctx, executionID, exec.StateVersion, domain.StateCancelling); err != nil {
+		return fmt.Errorf("transitioning to cancelling: %w", err)
+	}
+
+	s.logger.Info("cancel.accepted",
+		"execution_id", executionID,
+		"source_state", string(exec.CancellationSourceState),
+	)
+
+	if s.intake != nil {
+		s.intake.AdmitExecution(ctx, executionID)
+	}
+	return nil
 }
 
 func generateID() (string, error) {

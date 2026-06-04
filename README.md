@@ -99,7 +99,26 @@ curl -X POST http://127.0.0.1:8080/v1/switches \
 
 對 `openstack_to_slurm` 而言，request body 必須帶 `node_name`。這一筆 execution 會先以 `awaiting_target_node` 建立，並先記錄 API 傳入的 `node_name`。這代表 request 已被接受，也已經進入 MQ admission path，但 daemon 還不會 acquire lease、做 precheck，或開始任何 host-level mutation；它會先等自己 publish 的節點綁定事件被 consumer 處理完。
 
-### 3. 查詢 execution 狀態
+### 3. 取消 execution
+
+在 execution 進入非可逆的 host mutation 前，可以用 cancel endpoint 中止等待中的 execution:
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/switches/<execution-id>/cancel \
+    -H 'Authorization: Bearer dev-token'
+```
+
+只有下列 wait state 可以取消:
+
+- `awaiting_target_node`
+- `awaiting_source_allocation`
+- `source_quiescing`
+
+其他 active state（如 `rebooting`、`verifying`）會回傳 `HTTP 409`，表示該狀態不在安全取消範圍內。成功取消後，execution 會進入 `cancelling`，orchestrator 執行對應的 cleanup 後再進入 `cancelled`。`cancelled` 的 `overall_status` 會顯示為 `failed`，`final_error_code` 為 `cancelled_by_user`。
+
+同一個 execution 重複送 cancel request 是 idempotent 的。
+
+### 4. 查詢 execution 狀態
 
 ```bash
 curl http://127.0.0.1:8080/v1/switches/<execution-id> \
@@ -545,6 +564,10 @@ Daemon 啟動時會把所有 log 以 JSON 格式寫到 stderr，預設 level 為
 | `step.failed` | step handler 回傳錯誤 |
 | `execution.completed` | execution 成功走到 `completed` 狀態 |
 | `execution.failed` | execution 進入任一 failed terminal 狀態 |
+| `cancel.accepted` | API cancel 請求被接受，execution 進入 `cancelling`；帶有 `source_state` |
+| `cancel.cleanup_started` | orchestrator 開始執行 cancel cleanup；帶有 `source_state` 與 `direction` |
+| `cancel.cleanup_succeeded` | cleanup 動作成功完成 |
+| `cancel.execution_cancelled` | execution 成功進入 `cancelled` terminal 狀態 |
 
 ### 常用 jq 篩選範例
 
