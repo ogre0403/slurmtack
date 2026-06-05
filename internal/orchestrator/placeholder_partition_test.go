@@ -37,6 +37,10 @@ func (f *capturePlaceholderSlurmClient) CancelJob(_ context.Context, jobID strin
 	return nil
 }
 
+func (f *capturePlaceholderSlurmClient) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
+	return nil, nil
+}
+
 func TestOrchestratorSubmitPlaceholderUsesRequestedPartition(t *testing.T) {
 	fakeSlurm := &capturePlaceholderSlurmClient{}
 	exec := &domain.Execution{

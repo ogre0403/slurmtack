@@ -1,17 +1,39 @@
+networks:
+  slurmtack-net:
+    driver: bridge
+
 services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/html:/usr/share/nginx/html:ro
+    networks:
+      - slurmtack-net
+    depends_on:
+      - slurmtack
+    restart: unless-stopped
+
   slurmtack:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    network_mode: host
+    networks:
+      - slurmtack-net
     env_file: .env
     volumes:
       - .:/data
       - ${HOME}/.ssh/id_rsa:/run/secrets/slurmtack-ssh-key:ro
+      - /etc/hosts:/etc/hosts:ro
     restart: unless-stopped
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
-    network_mode: host
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - slurmtack-net
     restart: unless-stopped
-

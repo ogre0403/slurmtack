@@ -35,7 +35,7 @@ func setupCancelServer(t *testing.T, state domain.SwitchState, dir domain.Switch
 	}
 
 	svc := service.NewSwitchService(sqlStore, nil)
-	srv := NewServer(":0", "test-token", sqlStore, svc, nil)
+	srv := NewServer(":0", "test-token", sqlStore, svc, nil, nil)
 	return srv, exec.ID
 }
 
@@ -127,7 +127,7 @@ func TestCancelEndpoint_IdempotentOnCancelling(t *testing.T) {
 	}
 
 	svc := service.NewSwitchService(sqlStore, nil)
-	srv := NewServer(":0", "test-token", sqlStore, svc, nil)
+	srv := NewServer(":0", "test-token", sqlStore, svc, nil, nil)
 
 	w := cancelRequest(t, srv, exec.ID)
 	if w.Code != http.StatusAccepted {

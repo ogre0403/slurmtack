@@ -18,6 +18,10 @@ import (
 	"github.com/slurmtack/slurmtack/internal/trace"
 )
 
+type worker struct {
+	dirty bool
+}
+
 type Config struct {
 	TickInterval    time.Duration
 	SSHPollInterval time.Duration
@@ -33,7 +37,7 @@ type Orchestrator struct {
 	cfg       Config
 	logger    *slog.Logger
 	mu        sync.Mutex
-	workers   map[string]struct{}
+	workers   map[string]*worker
 	runCtx    context.Context
 }
 
@@ -48,7 +52,7 @@ func New(s store.Store, runner *engine.Runner, sshRunner remote.Runner, slurmCli
 		openstack: osClient,
 		cfg:       cfg,
 		logger:    trace.OrDefault(logger),
-		workers:   make(map[string]struct{}),
+		workers:   make(map[string]*worker),
 	}
 }
 
@@ -66,7 +70,14 @@ func (o *Orchestrator) AdmitExecution(ctx context.Context, executionID string) {
 	}
 	o.mu.Lock()
 	runCtx := o.runCtx
+
+	if w, exists := o.workers[executionID]; exists {
+		w.dirty = true
+		o.mu.Unlock()
+		return
+	}
 	o.mu.Unlock()
+
 	// Prefer the long-lived Run context so the worker is not tied to a
 	// short-lived caller context (e.g. an HTTP request that returns 202).
 	workerCtx := ctx
@@ -107,7 +118,7 @@ func (o *Orchestrator) startWorker(executionID string) bool {
 	if _, exists := o.workers[executionID]; exists {
 		return false
 	}
-	o.workers[executionID] = struct{}{}
+	o.workers[executionID] = &worker{}
 	return true
 }
 
@@ -125,6 +136,15 @@ func (o *Orchestrator) runExecution(ctx context.Context, executionID string) {
 			return
 		}
 
+		o.mu.Lock()
+		w, exists := o.workers[executionID]
+		if !exists {
+			o.mu.Unlock()
+			return
+		}
+		w.dirty = false
+		o.mu.Unlock()
+
 		exec, err := o.store.GetExecution(ctx, executionID)
 		if errors.Is(err, store.ErrNotFound) {
 			return
@@ -139,6 +159,12 @@ func (o *Orchestrator) runExecution(ctx context.Context, executionID string) {
 
 		action := o.determineAction(exec)
 		if action == actionNone {
+			o.mu.Lock()
+			if w.dirty {
+				o.mu.Unlock()
+				continue
+			}
+			o.mu.Unlock()
 			return
 		}
 
@@ -160,6 +186,12 @@ func (o *Orchestrator) runExecution(ctx context.Context, executionID string) {
 
 		delay, cont := o.nextStep(fresh, previousState, previousVersion)
 		if !cont {
+			o.mu.Lock()
+			if w.dirty {
+				o.mu.Unlock()
+				continue
+			}
+			o.mu.Unlock()
 			return
 		}
 		if delay > 0 {

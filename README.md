@@ -9,6 +9,7 @@ cp docker/.env.example docker/.env
 make up
 ```
 
+
 ### Build PlaceHolder Job SIF
 
 ```bash
@@ -67,7 +68,7 @@ sudo bash ./build-placeholder-agent.sh
 
 ```shell
 EXEC_ID=$(
-curl -X POST http://localhost:8080/v1/switches \
+curl -X POST http://localhost/v1/switches \
   -H "Authorization: Bearer changeme" \
   -H "Content-Type: application/json" \
   -d '{
@@ -78,7 +79,7 @@ curl -X POST http://localhost:8080/v1/switches \
 )
 
 curl -s -H 'Authorization: Bearer changeme' \
-  "http://127.0.0.1:8080/v1/switches/$EXEC_ID" | jq .
+  "http://localhost/v1/switches/$EXEC_ID" | jq .
 ```
 
 
@@ -88,7 +89,7 @@ curl -s -H 'Authorization: Bearer changeme' \
 
 ```shell
 EXEC_ID=$(
-  curl -s -X POST http://127.0.0.1:8080/v1/switches \
+  curl -s -X POST http://localhost/v1/switches \
     -H 'Authorization: Bearer changeme' \
     -H 'Content-Type: application/json' \
     -d '{
@@ -99,7 +100,7 @@ EXEC_ID=$(
 )
 
 curl -s -H 'Authorization: Bearer changeme' \
-  "http://127.0.0.1:8080/v1/switches/$EXEC_ID" | jq .
+  "http://localhost/v1/switches/$EXEC_ID" | jq .
 
 ```
 
@@ -117,19 +118,19 @@ curl -s -H 'Authorization: Bearer changeme' \
 
 
 ```shell
-curl -X POST http://localhost:8080/v1/switches/$EXEC_ID/cancel -H "Authorization: Bearer changeme"
+curl -X POST http://localhost/v1/switches/$EXEC_ID/cancel -H "Authorization: Bearer changeme"
 ```
 
 ### List all switch
 
 ```shell
-curl http://localhost:8080/v1/switches -H "Authorization: Bearer changeme"
+curl http://localhost/v1/switches -H "Authorization: Bearer changeme"
 ```
 
 
 ### Health Check
 ```shell
-curl http://127.0.0.1:8080/health
+curl http://localhost/api/health
 ```
 
 
@@ -154,3 +155,32 @@ jq 格式化log
 ```shell
 docker logs docker-slurmtack-1 -f 2>&1 | jq .
 ```
+
+
+## Troubleshooting
+
+1. slurmtack 的 log 出現 `lease already held by another execution`
+
+  ```json
+  {
+    "time":"2026-06-05T00:04:56.287044308Z",
+    "level":"WARN",
+    "msg":"execution.failed",
+    "execution_id":"f6b4268f5af48fb35db8db73661736af",
+    "failure_class":"precheck_blocked",
+    "terminal_state":"failed_non_destructive",
+    "error_code":"step_error",
+    "error_summary":"lease already held by another execution"
+  }
+  ```
+  
+  這個錯誤是由於前一次的執行失敗，但並未正常釋放其持有的節點租約（lease），導致新的執行因租約被佔用而失敗。
+
+  * 清除特定節點的租約：
+  ```shell
+  sqlite3 ./docker/slurmtack.db "DELETE FROM leases WHERE node_name = 'FUSION-03-worker-tf';"
+  ```
+  * 清除所有節點的租約：
+  ```shell
+  sqlite3 ./docker/slurmtack.db "DELETE FROM leases;"
+  ```

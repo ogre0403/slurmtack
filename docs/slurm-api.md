@@ -38,6 +38,8 @@ curl -s "$API_BASE/ping" \
 
 ## Send Slurm Job
 
+### Basic Example
+
 `infra_fusion` 預設會建立 `testaccount`，並把 `cloud-user` 加進這個 account，所以以下 payload 直接使用 `account=testaccount`。
 
 建立 submit payload：
@@ -63,11 +65,42 @@ EOF
 送出 job：
 
 ```bash
-JOB_SUBMIT_RESULT=$(curl -s -X POST "$API_BASE/job/submit" \
+export BASE_URL=http://192.168.95.58:6820/slurm/v0.0.40
+export API_USER="cloud-user"
+export JOB_TOKEN=$(sudo scontrol token username="$API_USER" lifespan=3600 | sed -n 's/^SLURM_JWT=//p')
+export PARTITION=all
+export PROJECT=testaccount
+
+# Use this command
+
+JOB_SUBMIT_RESULT=$(curl -s -X POST "$BASE_URL/job/submit" \
 	-H "Content-Type: application/json" \
 	-H "X-SLURM-USER-NAME: $API_USER" \
 	-H "X-SLURM-USER-TOKEN: $JOB_TOKEN" \
 	-d @/tmp/slurm-job-submit.json)
+
+# or Use this one
+
+curl -s -X POST "${BASE_URL}/job/submit" \
+     -H "Content-Type: application/json" \
+	 -H "X-SLURM-USER-NAME: $API_USER"   \
+     -H "X-SLURM-USER-TOKEN: $JOB_TOKEN" \
+     -d @- <<EOF
+{
+	"job": {
+		"name": "api-demo-job",
+		"partition": "${PARTITION}",
+		"account": "${PROJECT}",
+		"current_working_directory": "/home/${API_USER}",
+		"standard_output": "/home/${API_USER}/slurm_api_%j.out",
+		"environment": [
+			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		],
+		"tasks": 1
+	},
+ 	"script": "#!/bin/bash\nsrun bash -c 'echo HOSTNAME: \$(hostname) , DATE : \$(date) , USER: ${API_USER} '"
+}
+EOF
 
 echo "$JOB_SUBMIT_RESULT"
 
@@ -89,6 +122,39 @@ curl -s "$API_BASE/jobs/state/?job_id=$JOB_ID" \
 curl -s "$API_BASE/job/$JOB_ID" \
 	-H "X-SLURM-USER-NAME: $API_USER" \
 	-H "X-SLURM-USER-TOKEN: $JOB_TOKEN"
+```
+
+### N4 Example
+
+```shell
+export BASE_URL=http://172.21.103.65:6820/slurm/v0.0.40
+export API_USER=ogre0403
+export JOB_TOKEN=$(scontrol token username="$API_USER" lifespan=3600 | sed -n 's/^SLURM_JWT=//p')
+export PARTITION=slinky
+export PROJECT=GOV113097
+
+curl -s -X POST "${BASE_URL}/job/submit" \
+     -H "Content-Type: application/json" \
+     -H "X-SLURM-USER-TOKEN: $JOB_TOKEN" \
+	 -H "X-SLURM-USER-NAME: $API_USER"   \
+     -d @- <<EOF
+{
+  "job": {
+    "name": "api_srun_migration",
+    "partition": "${PARTITION}",
+    "account": "${PROJECT}",
+    "tasks_per_node": 1,
+    "current_working_directory": "/home/${API_USER}",
+    "standard_output": "/home/${API_USER}/slurm_api_%j.out",
+    "tasks": 4,
+    "environment": [
+      "PATH=/usr/bin:/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin",
+      "LD_LIBRARY_PATH=/usr/lib"
+    ]
+  },
+  "script": "#!/bin/bash\nsrun bash -c 'echo HOSTNAME: \$(hostname) , DATE : \$(date) , USER: ${API_USER} '"
+}
+EOF
 ```
 
 ## Drain and Resume Node
@@ -159,3 +225,18 @@ curl -s "$API_BASE/node/$NODE_NAME" \
 
 回傳中的 `state` 不應再包含 `DRAIN`；通常會回到 `IDLE` 或目前可服務的狀態。
 
+
+
+## List Partition Nodes
+
+```shell
+export BASE_URL=http://192.168.95.58:6820/slurm/v0.0.40
+export API_USER="cloud-user"
+export JOB_TOKEN=$(sudo scontrol token username="$API_USER" lifespan=3600 | sed -n 's/^SLURM_JWT=//p')
+export PARTITION=all
+
+curl -s -X GET "$BASE_URL/nodes"    \
+-H "X-SLURM-USER-NAME: $API_USER"   \
+-H "X-SLURM-USER-TOKEN: $JOB_TOKEN" \
+| jq ".nodes[] | select(.partitions[]? == \"$PARTITION\") | {name: .name, state: .state}"
+```

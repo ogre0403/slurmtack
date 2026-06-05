@@ -19,10 +19,16 @@ type NodeState struct {
 	RunningJob []string
 }
 
+type Partition struct {
+	Name  string
+	Nodes []string
+}
+
 type Client interface {
 	SubmitPlaceholderJob(ctx context.Context, req PlaceholderJobRequest) (*PlaceholderJobResult, error)
 	GetNodeState(ctx context.Context, nodeName string) (*NodeState, error)
 	DrainNode(ctx context.Context, nodeName, reason string) error
 	ResumeNode(ctx context.Context, nodeName string) error
 	CancelJob(ctx context.Context, jobID string) error
+	ListPartitions(ctx context.Context) ([]Partition, error)
 }

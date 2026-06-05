@@ -139,7 +139,11 @@ func main() {
 	if slurmClient != nil {
 		svc = svc.WithSlurmNodeStateReader(slurmClient)
 	}
-	srv := api.NewServer(cfg.ListenAddr, cfg.APIToken, sqlStore, svc, baseLogger)
+	var inventoryHandler *api.InventoryHandler
+	if slurmClient != nil && osClient != nil {
+		inventoryHandler = api.NewInventoryHandler(slurmClient, osClient, sqlStore)
+	}
+	srv := api.NewServer(cfg.ListenAddr, cfg.APIToken, sqlStore, svc, inventoryHandler, baseLogger)
 
 	wg.Add(1)
 	go func() {

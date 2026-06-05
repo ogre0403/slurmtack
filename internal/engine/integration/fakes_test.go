@@ -61,6 +61,10 @@ func (f *FakeSlurmClient) CancelJob(_ context.Context, jobID string) error {
 	return nil
 }
 
+func (f *FakeSlurmClient) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
+	return nil, nil
+}
+
 type FakeOpenStackClient struct {
 	Instances  map[string][]openstack.Instance
 	Migrations map[string][]string

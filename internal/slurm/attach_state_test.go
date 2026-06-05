@@ -32,6 +32,10 @@ func (c *captureAttachClient) ResumeNode(_ context.Context, _ string) error {
 
 func (c *captureAttachClient) CancelJob(_ context.Context, _ string) error { return nil }
 
+func (c *captureAttachClient) ListPartitions(_ context.Context) ([]Partition, error) {
+	return nil, nil
+}
+
 func TestAttachHandlerExecuteGuardedResume(t *testing.T) {
 	exec := &domain.Execution{NodeName: "gpu-node-01"}
 	tests := []struct {

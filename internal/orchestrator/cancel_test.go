@@ -42,6 +42,10 @@ func (f *fakeSlurmCancelClient) CancelJob(_ context.Context, jobID string) error
 	return f.cancelJobErr
 }
 
+func (f *fakeSlurmCancelClient) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
+	return nil, nil
+}
+
 func newCancellingExec(direction domain.SwitchDirection, sourceState domain.SwitchState, jobID string) *domain.Execution {
 	return &domain.Execution{
 		ID:                      "cancel-exec-1",

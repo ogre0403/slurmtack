@@ -38,6 +38,10 @@ func (c *attachTestSlurmClient) ResumeNode(_ context.Context, _ string) error {
 
 func (c *attachTestSlurmClient) CancelJob(_ context.Context, _ string) error { return nil }
 
+func (c *attachTestSlurmClient) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
+	return nil, nil
+}
+
 func TestDoAttachGuardsResumeForOpenStackToSlurm(t *testing.T) {
 	tests := []struct {
 		name            string

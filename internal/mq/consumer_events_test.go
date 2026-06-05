@@ -43,6 +43,10 @@ func (f *fakeAdmissionSlurmClient) CancelJob(_ context.Context, jobID string) er
 	return nil
 }
 
+func (f *fakeAdmissionSlurmClient) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
+	return nil, nil
+}
+
 type ackRecorder struct {
 	acked   int
 	nacked  int

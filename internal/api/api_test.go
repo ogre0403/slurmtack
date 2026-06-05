@@ -127,7 +127,7 @@ func setupTestServerWithStoreAndLogger(t *testing.T, logger *slog.Logger, reader
 	if len(readers) > 0 {
 		svc = svc.WithSlurmNodeStateReader(readers[0])
 	}
-	return NewServer(":0", "test-token", sqlStore, svc, logger), sqlStore
+	return NewServer(":0", "test-token", sqlStore, svc, nil, logger), sqlStore
 }
 
 func TestHealthEndpoint(t *testing.T) {

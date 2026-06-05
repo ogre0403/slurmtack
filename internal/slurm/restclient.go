@@ -131,8 +131,8 @@ func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJo
 		return nil, err
 	}
 
-	if len(result.Errors) > 0 {
-		return nil, c.apiError(resp.StatusCode, result.Errors)
+	if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
+		return nil, c.apiError(resp.StatusCode, fatalErrs)
 	}
 
 	return &PlaceholderJobResult{
@@ -152,8 +152,8 @@ func (c *RestClient) GetNodeState(ctx context.Context, nodeName string) (*NodeSt
 		return nil, err
 	}
 
-	if len(result.Errors) > 0 {
-		return nil, c.apiError(resp.StatusCode, result.Errors)
+	if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
+		return nil, c.apiError(resp.StatusCode, fatalErrs)
 	}
 
 	if len(result.Nodes) == 0 {
@@ -228,6 +228,33 @@ func isResumeIdempotent(e *SlurmAPIError) bool {
 	return false
 }
 
+func (c *RestClient) ListPartitions(ctx context.Context) ([]Partition, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/slurm/v0.0.40/partitions", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result partitionsResponse
+	if err := c.decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+
+	if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
+		return nil, c.apiError(resp.StatusCode, fatalErrs)
+	}
+
+	var partitions []Partition
+	for _, p := range result.Partitions {
+		nodes := expandNodeList(p.Nodes.Configured)
+		partitions = append(partitions, Partition{
+			Name:  p.Name,
+			Nodes: nodes,
+		})
+	}
+	return partitions, nil
+}
+
 func (c *RestClient) CancelJob(ctx context.Context, jobID string) error {
 	resp, err := c.doRequest(ctx, http.MethodDelete, fmt.Sprintf("/slurm/v0.0.40/job/%s", jobID), nil)
 	if err != nil {
@@ -240,8 +267,8 @@ func (c *RestClient) CancelJob(ctx context.Context, jobID string) error {
 		return err
 	}
 
-	if len(result.Errors) > 0 {
-		return c.apiError(resp.StatusCode, result.Errors)
+	if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
+		return c.apiError(resp.StatusCode, fatalErrs)
 	}
 
 	return nil
@@ -289,8 +316,28 @@ func (c *RestClient) doRequestWithIdentity(ctx context.Context, method, path str
 
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			apiErr := &SlurmAPIError{
+				StatusCode: resp.StatusCode,
+				Messages:   []string{http.StatusText(resp.StatusCode)},
+			}
+			c.logRequest(method, path, identity, started, resp.StatusCode, "", apiErr)
+			return nil, apiErr
+		}
+
 		var errResp slurmErrorResponse
-		if decErr := json.NewDecoder(resp.Body).Decode(&errResp); decErr == nil && len(errResp.Errors) > 0 {
+		if decErr := json.Unmarshal(bodyBytes, &errResp); decErr == nil && len(errResp.Errors) > 0 {
+			fatalErrs := filterFatalErrors(errResp.Errors)
+			if len(fatalErrs) == 0 {
+				c.logger.Warn("slurmrestd returned non-fatal database errors; continuing with response data",
+					"status_code", resp.StatusCode,
+				)
+				resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				c.logRequest(method, path, identity, started, resp.StatusCode, "non-fatal: "+summarizeMessages(c.apiError(resp.StatusCode, errResp.Errors).Messages), nil)
+				return resp, nil
+			}
+
 			apiErr := c.apiError(resp.StatusCode, errResp.Errors)
 			c.logRequest(method, path, identity, started, resp.StatusCode, summarizeMessages(apiErr.Messages), apiErr)
 			return nil, apiErr
@@ -343,4 +390,27 @@ func (c *RestClient) logRequest(method, path, identity string, started time.Time
 
 func summarizeMessages(messages []string) string {
 	return strings.Join(messages, "; ")
+}
+
+func isNonFatalError(err slurmError) bool {
+	msg := strings.ToLower(err.Error)
+	desc := strings.ToLower(err.Description)
+	if strings.Contains(msg, "header lengths are longer than data received") ||
+		strings.Contains(msg, "slurmdb query failed") ||
+		strings.Contains(desc, "slurmdb query failed") ||
+		strings.Contains(desc, "unable to query tres") ||
+		err.Source == "slurmdb_tres_get" {
+		return true
+	}
+	return false
+}
+
+func filterFatalErrors(errs []slurmError) []slurmError {
+	var fatal []slurmError
+	for _, e := range errs {
+		if !isNonFatalError(e) {
+			fatal = append(fatal, e)
+		}
+	}
+	return fatal
 }

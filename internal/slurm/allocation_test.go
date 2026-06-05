@@ -35,6 +35,10 @@ func (f *captureAllocationClient) CancelJob(_ context.Context, jobID string) err
 	return nil
 }
 
+func (f *captureAllocationClient) ListPartitions(_ context.Context) ([]Partition, error) {
+	return nil, nil
+}
+
 func TestAllocationHandlerSubmitPlaceholderUsesRequestedPartition(t *testing.T) {
 	fakeClient := &captureAllocationClient{}
 	exec := &domain.Execution{

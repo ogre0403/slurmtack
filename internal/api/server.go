@@ -17,7 +17,7 @@ type Server struct {
 	engine     *gin.Engine
 }
 
-func NewServer(listenAddr string, token string, sqlStore *store.SQLiteStore, svc *service.SwitchService, logger *slog.Logger) *Server {
+func NewServer(listenAddr string, token string, sqlStore *store.SQLiteStore, svc *service.SwitchService, inventoryHandler *InventoryHandler, logger *slog.Logger) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(accessLogMiddleware(trace.OrDefault(logger).With("component", "api")), gin.Recovery())
@@ -30,8 +30,12 @@ func NewServer(listenAddr string, token string, sqlStore *store.SQLiteStore, svc
 	{
 		v1.POST("/switches", switchHandler.Create)
 		v1.GET("/switches/:id", switchHandler.Get)
+		v1.GET("/switches/:id/steps", switchHandler.Steps)
 		v1.GET("/switches", switchHandler.List)
 		v1.POST("/switches/:id/cancel", switchHandler.Cancel)
+		if inventoryHandler != nil {
+			v1.GET("/dashboard/inventory", inventoryHandler.Get)
+		}
 	}
 
 	return &Server{
