@@ -27,9 +27,9 @@ Each node is classified as one of:
 
 ## Switch Actions
 
-- **Switch to Slurm** (`openstack_to_slurm`): Available on nodes owned by OpenStack. Submits `POST /v1/switches` with `direction=openstack_to_slurm` and the node name.
-- **Switch to OpenStack** (`slurm_to_openstack`): Available on nodes owned by Slurm. Submits `POST /v1/switches` with `direction=slurm_to_openstack` and optionally `slurm_partition` from the selected partition context.
-- **Cancel**: Available on nodes with an active execution. Submits `POST /v1/switches/:id/cancel`.
+- **Switch to Slurm** (`openstack_to_slurm`): Available on node cards for nodes owned by OpenStack. Submits `POST /v1/switches` with `direction=openstack_to_slurm` and the node name.
+- **Switch to OpenStack** (`slurm_to_openstack`): Rendered in a partition-scoped action bar above the node grid (not on individual node cards) because this workflow does not support request-time node targeting. When the partition selection is `All`, the request omits `slurm_partition` so Slurm uses its default partition. When a specific partition is selected, the request includes `slurm_partition=<name>` to constrain placeholder job allocation.
+- **Cancel**: Available on node cards with an active execution. Submits `POST /v1/switches/:id/cancel`.
 
 ## New Read Endpoints
 

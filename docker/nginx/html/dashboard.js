@@ -86,6 +86,24 @@
     });
   }
 
+  function renderPartitionActionBar() {
+    var bar = document.getElementById('partition-action-bar');
+    var hasSlurmNodes = state.nodes.some(function (n) {
+      return n.available_direction === 'slurm_to_openstack';
+    });
+    if (!hasSlurmNodes) {
+      bar.style.display = 'none';
+      return;
+    }
+    var label = state.selectedPartition
+      ? 'Switch from partition ' + escapeHtml(state.selectedPartition) + ' to OpenStack'
+      : 'Switch from All partitions to OpenStack';
+    bar.style.display = 'flex';
+    bar.innerHTML =
+      '<span class="partition-label">' + label + '</span>' +
+      '<button onclick="switchFromPartition()">Switch to OpenStack</button>';
+  }
+
   function renderNodes() {
     var grid = document.getElementById('node-grid');
     grid.innerHTML = '';
@@ -134,6 +152,8 @@
       nodeFilter.appendChild(opt);
     });
     nodeFilter.value = currentVal;
+
+    renderPartitionActionBar();
   }
 
   function buildNodeActions(node) {
@@ -142,9 +162,6 @@
     }
     if (node.available_direction === 'openstack_to_slurm') {
       return '<button onclick="switchNode(\'' + escapeAttr(node.node_name) + '\', \'openstack_to_slurm\')">Switch to Slurm</button>';
-    }
-    if (node.available_direction === 'slurm_to_openstack') {
-      return '<button onclick="switchFromPartition(\'' + escapeAttr(node.node_name) + '\')">Switch to OpenStack</button>';
     }
     return '';
   }
@@ -258,8 +275,9 @@
     }
   };
 
-  window.switchFromPartition = async function (nodeName) {
-    if (!confirm('Switch ' + nodeName + ' to OpenStack from partition ' + (state.selectedPartition || '(auto)') + '?')) return;
+  window.switchFromPartition = async function () {
+    var partitionLabel = state.selectedPartition || 'All';
+    if (!confirm('Start slurm_to_openstack switch for partition: ' + partitionLabel + '?')) return;
     var requestedBy = prompt('Requested by:', 'dashboard-operator');
     if (!requestedBy) return;
 

@@ -44,6 +44,12 @@
     .node-card .actions button.danger { border-color: #e74c3c; color: #e74c3c; }
     .node-card .actions button.danger:hover { background: #fdf0ef; }
 
+    /* Partition action bar */
+    #partition-action-bar { margin-bottom: 12px; padding: 10px 14px; background: #fff; border: 1px solid #ddd; border-radius: 6px; display: none; align-items: center; gap: 10px; }
+    #partition-action-bar .partition-label { font-size: 0.8rem; color: #555; }
+    #partition-action-bar button { font-size: 0.8rem; padding: 6px 12px; border: 1px solid #1a1a2e; border-radius: 4px; cursor: pointer; background: #1a1a2e; color: #fff; }
+    #partition-action-bar button:hover { background: #2a2a4e; }
+
     /* History panel */
     #history-list { list-style: none; max-height: calc(100vh - 140px); overflow-y: auto; }
     #history-list li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 0.8rem; }
@@ -90,6 +96,7 @@
 
     <div class="panel" id="node-panel">
       <h2>Nodes</h2>
+      <div id="partition-action-bar"></div>
       <div id="node-grid"></div>
     </div>
 

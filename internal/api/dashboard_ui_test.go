@@ -20,6 +20,7 @@ func TestDashboardHTML_ContainsRequiredRegions(t *testing.T) {
 		`id="health-badge"`,
 		`id="partition-list"`,
 		`id="node-grid"`,
+		`id="partition-action-bar"`,
 		`id="history-list"`,
 		`id="detail-drawer"`,
 		`id="loading-overlay"`,
@@ -71,6 +72,59 @@ func TestDashboardJS_SwitchPayloads(t *testing.T) {
 	}
 	if !strings.Contains(js, `slurm_partition`) {
 		t.Error("slurm_to_openstack should support slurm_partition")
+	}
+}
+
+func TestDashboardJS_NoNodeScopedSlurmToOpenstack(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if strings.Contains(js, `switchFromPartition('`) {
+		t.Error("node cards should not wire switchFromPartition with a node argument")
+	}
+	if !strings.Contains(js, `switchFromPartition()`) {
+		t.Error("partition action bar should call switchFromPartition without arguments")
+	}
+}
+
+func TestDashboardJS_PartitionActionBar(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, `renderPartitionActionBar`) {
+		t.Error("dashboard JS should define renderPartitionActionBar")
+	}
+	if !strings.Contains(js, `partition-action-bar`) {
+		t.Error("dashboard JS should reference partition-action-bar element")
+	}
+}
+
+func TestDashboardJS_PartitionScopedPayloadLogic(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, `if (state.selectedPartition) body.slurm_partition = state.selectedPartition`) {
+		t.Error("slurm_to_openstack should conditionally include slurm_partition based on selectedPartition")
+	}
+	if strings.Contains(js, `node_name`) && strings.Contains(js, `slurm_to_openstack`) {
+		lines := strings.Split(js, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "slurm_to_openstack") && strings.Contains(line, "node_name") {
+				t.Error("slurm_to_openstack payload should never include node_name")
+			}
+		}
 	}
 }
 
