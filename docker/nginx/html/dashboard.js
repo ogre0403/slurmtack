@@ -1,13 +1,18 @@
 (function () {
   'use strict';
 
+  var PAGE_SIZE = 10;
+
   var state = {
     token: localStorage.getItem('slurmtack_token') || '',
     partitions: [],
     nodes: [],
     selectedPartition: null,
-    history: [],
-    historyOldest: null
+    executions: [],
+    execPage: 0,
+    execPageCursors: [null],
+    execHasMore: false,
+    selectedExecutionId: null
   };
 
   function authHeaders() {
@@ -107,7 +112,9 @@
   function renderNodes() {
     var grid = document.getElementById('node-grid');
     grid.innerHTML = '';
-    var nodes = state.nodes;
+    var nodes = state.nodes.slice().sort(function (a, b) {
+      return a.node_name < b.node_name ? -1 : a.node_name > b.node_name ? 1 : 0;
+    });
     if (state.selectedPartition) {
       nodes = nodes.filter(function (n) {
         return n.partitions && n.partitions.indexOf(state.selectedPartition) >= 0;
@@ -141,7 +148,7 @@
       grid.appendChild(card);
     });
 
-    // Populate history node filter
+    // Populate execution node filter
     var nodeFilter = document.getElementById('history-node-filter');
     var currentVal = nodeFilter.value;
     nodeFilter.innerHTML = '<option value="">All nodes</option>';
@@ -166,43 +173,69 @@
     return '';
   }
 
-  // History
-  async function loadHistory(append) {
+  // Executions
+  async function loadExecutions(pageIndex) {
+    if (pageIndex === undefined) pageIndex = 0;
     var nodeFilter = document.getElementById('history-node-filter').value;
     var statusFilter = document.getElementById('history-status-filter').value;
-    var url = '/v1/switches?limit=20';
+    var url = '/v1/switches?limit=' + PAGE_SIZE;
     if (nodeFilter) url += '&node=' + encodeURIComponent(nodeFilter);
     if (statusFilter) url += '&status=' + encodeURIComponent(statusFilter);
-    if (append && state.historyOldest) url += '&before=' + encodeURIComponent(state.historyOldest);
+    var cursor = state.execPageCursors[pageIndex];
+    if (cursor) url += '&before=' + encodeURIComponent(cursor);
 
     try {
       var res = await fetch(url, { headers: authHeaders() });
       if (!res.ok) return;
       var data = await res.json();
-      if (!append) state.history = [];
-      state.history = state.history.concat(data);
-      if (data.length > 0) {
-        state.historyOldest = data[data.length - 1].requested_at;
+      state.executions = data;
+      state.execPage = pageIndex;
+      state.execHasMore = data.length >= PAGE_SIZE;
+      if (state.execHasMore && !state.execPageCursors[pageIndex + 1]) {
+        state.execPageCursors[pageIndex + 1] = data[data.length - 1].requested_at;
       }
-      renderHistory();
-      document.getElementById('history-load-more').style.display = data.length >= 20 ? 'block' : 'none';
+      renderExecutions();
     } catch (e) { /* silent */ }
   }
 
-  function renderHistory() {
-    var list = document.getElementById('history-list');
+  function renderExecutions() {
+    var list = document.getElementById('execution-list');
     list.innerHTML = '';
-    state.history.forEach(function (exec) {
+    state.executions.forEach(function (exec) {
       var li = document.createElement('li');
+      var isActive = exec.overall_status === 'active';
+      if (isActive) li.classList.add('active-exec');
+      if (state.selectedExecutionId === exec.id) li.classList.add('selected');
+      var cancelBtn = isActive
+        ? '<div class="exec-row-actions"><button class="exec-cancel danger" onclick="event.stopPropagation();cancelExecution(\'' + escapeAttr(exec.id) + '\')">Cancel</button></div>'
+        : '';
       li.innerHTML =
         '<span class="history-status ' + escapeAttr(exec.overall_status) + '"></span>' +
-        '<strong>' + escapeHtml(exec.node_name || '(pending)') + '</strong> ' +
-        escapeHtml(exec.direction) + '<br>' +
-        '<small>' + escapeHtml(exec.current_state) + ' - ' + formatTime(exec.requested_at) + '</small>';
-      li.onclick = function () { openDetail(exec.id); };
+        '<strong>' + escapeHtml(exec.id) + '</strong><br>' +
+        '<small>' + escapeHtml(exec.direction) + ' &mdash; ' + escapeHtml(exec.current_state) + ' &mdash; ' + formatTime(exec.requested_at) + '</small>' +
+        cancelBtn;
+      li.onclick = function () { selectExecution(exec.id); };
       list.appendChild(li);
     });
+
+    document.getElementById('exec-page-prev').disabled = state.execPage === 0;
+    document.getElementById('exec-page-next').disabled = !state.execHasMore;
+    document.getElementById('exec-page-info').textContent = 'Page ' + (state.execPage + 1);
   }
+
+  function selectExecution(id) {
+    state.selectedExecutionId = id;
+    renderExecutions();
+    openDetail(id);
+  }
+
+  window.execNextPage = function () {
+    if (state.execHasMore) loadExecutions(state.execPage + 1);
+  };
+
+  window.execPrevPage = function () {
+    if (state.execPage > 0) loadExecutions(state.execPage - 1);
+  };
 
   // Detail drawer
   async function openDetail(id) {
@@ -222,10 +255,10 @@
       var steps = await stepsRes.json();
 
       var html = '<div class="meta">';
+      html += '<p class="exec-current-state"><strong>Current State:</strong> ' + escapeHtml(exec.current_state) + '</p>';
+      html += '<p><strong>Status:</strong> ' + escapeHtml(exec.overall_status) + '</p>';
       html += '<p><strong>Direction:</strong> ' + escapeHtml(exec.direction) + '</p>';
       html += '<p><strong>Node:</strong> ' + escapeHtml(exec.node_name || '(pending)') + '</p>';
-      html += '<p><strong>State:</strong> ' + escapeHtml(exec.current_state) + '</p>';
-      html += '<p><strong>Status:</strong> ' + escapeHtml(exec.overall_status) + '</p>';
       html += '<p><strong>Requested:</strong> ' + formatTime(exec.requested_at) + '</p>';
       html += '<p><strong>By:</strong> ' + escapeHtml(exec.requested_by) + '</p>';
       if (exec.error_summary) html += '<p><strong>Error:</strong> ' + escapeHtml(exec.error_summary) + '</p>';
@@ -269,7 +302,9 @@
         return;
       }
       loadInventory(state.selectedPartition);
-      loadHistory(false);
+      state.execPage = 0;
+      state.execPageCursors = [null];
+      loadExecutions(0);
     } catch (e) {
       alert('Switch failed: ' + e.message);
     }
@@ -291,7 +326,9 @@
         return;
       }
       loadInventory(state.selectedPartition);
-      loadHistory(false);
+      state.execPage = 0;
+      state.execPageCursors = [null];
+      loadExecutions(0);
     } catch (e) {
       alert('Switch failed: ' + e.message);
     }
@@ -307,7 +344,10 @@
         return;
       }
       loadInventory(state.selectedPartition);
-      loadHistory(false);
+      state.execPage = 0;
+      state.execPageCursors = [null];
+      await loadExecutions(0);
+      if (state.selectedExecutionId) openDetail(state.selectedExecutionId);
     } catch (e) {
       alert('Cancel failed: ' + e.message);
     }
@@ -339,19 +379,26 @@
     }
   }
 
-  // History filter events
-  document.getElementById('history-node-filter').onchange = function () { state.historyOldest = null; loadHistory(false); };
-  document.getElementById('history-status-filter').onchange = function () { state.historyOldest = null; loadHistory(false); };
-  document.getElementById('history-load-more').onclick = function () { loadHistory(true); };
+  // Filter events - reset pagination when filters change
+  document.getElementById('history-node-filter').onchange = function () {
+    state.execPage = 0;
+    state.execPageCursors = [null];
+    loadExecutions(0);
+  };
+  document.getElementById('history-status-filter').onchange = function () {
+    state.execPage = 0;
+    state.execPageCursors = [null];
+    loadExecutions(0);
+  };
 
   // Init
   ensureToken();
   checkHealth();
   loadInventory(null);
-  loadHistory(false);
+  loadExecutions(0);
 
   // Periodic refresh
   setInterval(checkHealth, 30000);
   setInterval(function () { loadInventory(state.selectedPartition); }, 30000);
-  setInterval(function () { state.historyOldest = null; loadHistory(false); }, 30000);
+  setInterval(function () { loadExecutions(state.execPage); }, 30000);
 })();

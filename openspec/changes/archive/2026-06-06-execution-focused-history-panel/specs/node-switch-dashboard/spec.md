@@ -1,36 +1,8 @@
-## Requirements
-
-### Requirement: Display partition-scoped node inventory
-
-The system SHALL provide an operator dashboard at `/` that loads a same-origin inventory read model and presents nodes grouped by Slurm partition. The primary inventory view MUST only include nodes discovered from Slurm partition membership, and the dashboard MUST allow the operator to scope the visible grid to a selected partition or to all discovered partitions.
-
-#### Scenario: Load dashboard inventory for all partitions
-
-- **WHEN** an operator opens the dashboard and the same-origin inventory request succeeds
-- **THEN** the page shows the discovered Slurm partitions and a node inventory derived from those partitions
-
-#### Scenario: Filter dashboard by selected partition
-
-- **WHEN** the operator selects a specific partition such as `gpu-maint`
-- **THEN** the dashboard shows only nodes that belong to that partition while preserving each node's canonical status fields
-
-### Requirement: Show ownership and readiness summary per node
-
-The dashboard SHALL display a status card or row for each discovered node that includes `node_name`, `partitions`, a normalized owner classification, a Slurm summary, an OpenStack summary, any active execution summary, and the most recent completed or failed execution summary. The owner classification MUST support at least `slurm`, `openstack`, `switching`, `conflict`, and `unknown`.
-
-#### Scenario: Node is actively switching
-
-- **WHEN** the inventory response marks a node with an active execution
-- **THEN** the dashboard shows that node as `switching` and includes the active execution identifier and current state
-
-#### Scenario: Node ownership is ambiguous
-
-- **WHEN** the inventory response classifies a node as `conflict` or `unknown`
-- **THEN** the dashboard renders that classification distinctly instead of implying ownership by either Slurm or OpenStack
+## MODIFIED Requirements
 
 ### Requirement: Trigger switch actions from the dashboard
 
-The dashboard SHALL let an operator trigger `openstack_to_slurm` and `slurm_to_openstack` transitions by calling the existing switch creation API. For `openstack_to_slurm`, the dashboard MUST submit the selected `node_name` from the node card. For `slurm_to_openstack`, the dashboard MUST expose the action from partition-scoped controls rather than an individual node card because request-time node selection is unsupported. When the current partition selection is `All`, the dashboard MUST send `POST /v1/switches` with `direction=slurm_to_openstack` and no `node_name` or `slurm_partition`. When the current partition selection is a specific partition such as `gpu-maint`, the dashboard MUST send `POST /v1/switches` with `direction=slurm_to_openstack` and `slurm_partition=gpu-maint` without sending `node_name`. The dashboard MUST also expose cancellation for an active execution by calling the existing cancel endpoint.
+The dashboard SHALL let an operator trigger `openstack_to_slurm` and `slurm_to_openstack` transitions by calling the existing switch creation API. For `openstack_to_slurm`, the dashboard MUST submit the selected `node_name` from the node card. For `slurm_to_openstack`, the dashboard MUST expose the action from partition-scoped controls rather than an individual node card because request-time node selection is unsupported. When the current partition selection is `All`, the dashboard MUST send `POST /v1/switches` with `direction=slurm_to_openstack` and no `node_name` or `slurm_partition`. When the current partition selection is a specific partition such as `gpu-maint`, the dashboard MUST send `POST /v1/switches` with `direction=slurm_to_openstack` and `slurm_partition=gpu-maint` without sending `node_name`. The dashboard MUST also expose cancellation for an active execution by calling the existing cancel endpoint from both the node summary area and the execution-focused right-side panel.
 
 #### Scenario: Launch openstack_to_slurm from a node card
 
