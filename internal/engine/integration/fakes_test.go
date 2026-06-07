@@ -35,6 +35,10 @@ func (f *FakeSlurmClient) GetNodeState(_ context.Context, nodeName string) (*slu
 	return state, nil
 }
 
+func (f *FakeSlurmClient) GetNodeStateWithIdentity(_ context.Context, nodeName string, _ slurm.WorkloadIdentity) (*slurm.NodeState, error) {
+	return f.GetNodeState(context.Background(), nodeName)
+}
+
 func (f *FakeSlurmClient) DrainNode(_ context.Context, nodeName, reason string) error {
 	f.Drained[nodeName] = true
 	if node, ok := f.Nodes[nodeName]; ok {
@@ -58,6 +62,10 @@ func (f *FakeSlurmClient) ResumeNode(_ context.Context, nodeName string) error {
 }
 
 func (f *FakeSlurmClient) CancelJob(_ context.Context, jobID string) error {
+	return nil
+}
+
+func (f *FakeSlurmClient) CancelJobWithIdentity(_ context.Context, jobID string, _ slurm.WorkloadIdentity) error {
 	return nil
 }
 

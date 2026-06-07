@@ -31,12 +31,17 @@ func (f *fakeSlurmInventoryClient) GetNodeState(_ context.Context, name string) 
 	return nil, nil
 }
 
+func (f *fakeSlurmInventoryClient) GetNodeStateWithIdentity(_ context.Context, name string, _ slurm.WorkloadIdentity) (*slurm.NodeState, error) {
+	return f.GetNodeState(context.Background(), name)
+}
+
 func (f *fakeSlurmInventoryClient) SubmitPlaceholderJob(_ context.Context, _ slurm.PlaceholderJobRequest) (*slurm.PlaceholderJobResult, error) {
 	return nil, nil
 }
-func (f *fakeSlurmInventoryClient) DrainNode(_ context.Context, _, _ string) error  { return nil }
-func (f *fakeSlurmInventoryClient) ResumeNode(_ context.Context, _ string) error    { return nil }
-func (f *fakeSlurmInventoryClient) CancelJob(_ context.Context, _ string) error     { return nil }
+func (f *fakeSlurmInventoryClient) DrainNode(_ context.Context, _, _ string) error              { return nil }
+func (f *fakeSlurmInventoryClient) ResumeNode(_ context.Context, _ string) error               { return nil }
+func (f *fakeSlurmInventoryClient) CancelJob(_ context.Context, _ string) error                { return nil }
+func (f *fakeSlurmInventoryClient) CancelJobWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) error { return nil }
 
 type fakeOSInventoryClient struct {
 	services   map[string]*openstack.ComputeServiceStatus

@@ -31,11 +31,15 @@ func (h *SwitchHandler) Create(c *gin.Context) {
 
 	dir := domain.SwitchDirection(req.Direction)
 	id, err := h.svc.RequestSwitch(c.Request.Context(), service.SwitchRequest{
-		NodeName:        req.NodeName,
-		Direction:       dir,
-		RequestedBy:     req.RequestedBy,
-		SlurmConstraint: req.SlurmConstraint,
-		SlurmPartition:  req.SlurmPartition,
+		NodeName:           req.NodeName,
+		Direction:          dir,
+		RequestedBy:        req.RequestedBy,
+		SlurmConstraint:    req.SlurmConstraint,
+		SlurmPartition:     req.SlurmPartition,
+		SlurmAccount:       req.SlurmAccount,
+		SlurmUser:          req.SlurmUser,
+		SlurmUserToken:     req.SlurmUserToken,
+		PlaceholderSIFFile: req.PlaceholderSIFFile,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidSwitchRequest) {
@@ -81,6 +85,7 @@ func (h *SwitchHandler) Get(c *gin.Context) {
 		LockReleasedAt:          exec.LockReleasedAt,
 		RequestedSlurmConstraint: exec.RequestedSlurmConstraint,
 		RequestedSlurmPartition:  exec.RequestedSlurmPartition,
+		RequestedSlurmAccount:    exec.RequestedSlurmAccount,
 		PlaceholderJobID:         exec.PlaceholderJobID,
 		AllocationEventAt:        exec.AllocationEventAt,
 		CancellationSourceState:  string(exec.CancellationSourceState),

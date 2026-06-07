@@ -27,7 +27,7 @@ func TestSlurmToOpenStackFullFlow(t *testing.T) {
 
 	osClient := NewFakeOpenStackClient()
 
-	svc := service.NewSwitchService(s, nil)
+	svc := service.NewSwitchService(s, nil).WithSlurmWorkloadDefaults("cloud-user", "test-token").WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif")
 	allocHandler := slurmPkg.NewAllocationHandler(s, runner, slurmClient)
 
 	execID, err := svc.RequestSwitch(ctx, service.SwitchRequest{

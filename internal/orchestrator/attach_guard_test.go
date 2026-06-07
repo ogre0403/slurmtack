@@ -29,6 +29,11 @@ func (c *attachTestSlurmClient) GetNodeState(_ context.Context, _ string) (*slur
 	return c.nodeState, nil
 }
 
+func (c *attachTestSlurmClient) GetNodeStateWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.NodeState, error) {
+	c.getNodeStateCalls++
+	return c.nodeState, nil
+}
+
 func (c *attachTestSlurmClient) DrainNode(_ context.Context, _, _ string) error { return nil }
 
 func (c *attachTestSlurmClient) ResumeNode(_ context.Context, _ string) error {
@@ -37,6 +42,10 @@ func (c *attachTestSlurmClient) ResumeNode(_ context.Context, _ string) error {
 }
 
 func (c *attachTestSlurmClient) CancelJob(_ context.Context, _ string) error { return nil }
+
+func (c *attachTestSlurmClient) CancelJobWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) error {
+	return nil
+}
 
 func (c *attachTestSlurmClient) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
 	return nil, nil

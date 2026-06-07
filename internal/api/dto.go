@@ -3,11 +3,15 @@ package api
 import "time"
 
 type SwitchRequest struct {
-	Direction       string `json:"direction" binding:"required"`
-	RequestedBy     string `json:"requested_by" binding:"required"`
-	NodeName        string `json:"node_name"`
-	SlurmConstraint string `json:"slurm_constraint"`
-	SlurmPartition  string `json:"slurm_partition"`
+	Direction         string `json:"direction" binding:"required"`
+	RequestedBy       string `json:"requested_by" binding:"required"`
+	NodeName          string `json:"node_name"`
+	SlurmConstraint   string `json:"slurm_constraint"`
+	SlurmPartition    string `json:"slurm_partition"`
+	SlurmAccount      string `json:"slurm_account"`
+	SlurmUser         string `json:"slurm_user"`
+	SlurmUserToken    string `json:"slurm_user_token"`
+	PlaceholderSIFFile string `json:"placeholder_sif_file"`
 }
 
 type SwitchResponse struct {
@@ -44,6 +48,7 @@ type ExecutionDetail struct {
 	LockReleasedAt           *time.Time `json:"lock_released_at,omitempty"`
 	RequestedSlurmConstraint string     `json:"requested_slurm_constraint,omitempty"`
 	RequestedSlurmPartition  string     `json:"requested_slurm_partition,omitempty"`
+	RequestedSlurmAccount    string     `json:"requested_slurm_account,omitempty"`
 	PlaceholderJobID         string     `json:"placeholder_job_id,omitempty"`
 	AllocationEventAt        *time.Time `json:"allocation_event_at,omitempty"`
 	CancellationSourceState  string     `json:"cancellation_source_state,omitempty"`

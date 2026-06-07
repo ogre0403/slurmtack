@@ -48,15 +48,17 @@ func (s *SQLiteStore) CreateExecution(_ context.Context, exec *domain.Execution)
 		current_state, desired_owner, previous_owner, state_version,
 		overall_status, lock_acquired_at, lock_released_at,
 		final_error_code, final_error_summary, log_root,
-		placeholder_job_id, requested_slurm_constraint, requested_slurm_partition, allocation_event_at,
-		cancellation_source_state
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		placeholder_job_id, requested_slurm_constraint, requested_slurm_partition,
+		requested_slurm_account, slurm_workload_user, slurm_workload_token,
+		placeholder_sif_file, allocation_event_at, cancellation_source_state
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		exec.ID, exec.NodeName, string(exec.Direction), exec.RequestedBy, exec.RequestedAt,
 		string(exec.CurrentState), string(exec.DesiredOwner), string(exec.PreviousOwner), exec.StateVersion,
 		string(exec.OverallStatus), nullTime(exec.LockAcquiredAt), nullTime(exec.LockReleasedAt),
 		exec.FinalErrorCode, exec.FinalErrorSummary, exec.LogRoot,
-		exec.PlaceholderJobID, exec.RequestedSlurmConstraint, exec.RequestedSlurmPartition, nullTime(exec.AllocationEventAt),
-		string(exec.CancellationSourceState),
+		exec.PlaceholderJobID, exec.RequestedSlurmConstraint, exec.RequestedSlurmPartition,
+		exec.RequestedSlurmAccount, exec.SlurmWorkloadUser, exec.SlurmWorkloadToken,
+		exec.PlaceholderSIFFile, nullTime(exec.AllocationEventAt), string(exec.CancellationSourceState),
 	)
 	return err
 }
@@ -67,8 +69,9 @@ func (s *SQLiteStore) GetExecution(_ context.Context, id string) (*domain.Execut
 		current_state, desired_owner, previous_owner, state_version,
 		overall_status, lock_acquired_at, lock_released_at,
 		final_error_code, final_error_summary, log_root,
-		placeholder_job_id, requested_slurm_constraint, requested_slurm_partition, allocation_event_at,
-		cancellation_source_state
+		placeholder_job_id, requested_slurm_constraint, requested_slurm_partition,
+		requested_slurm_account, slurm_workload_user, slurm_workload_token,
+		placeholder_sif_file, allocation_event_at, cancellation_source_state
 	FROM executions WHERE id = ?`, id)
 	return scanExecution(row)
 }
@@ -82,8 +85,9 @@ func (s *SQLiteStore) ListExecutions(_ context.Context, nodeName string) ([]*dom
 			current_state, desired_owner, previous_owner, state_version,
 			overall_status, lock_acquired_at, lock_released_at,
 			final_error_code, final_error_summary, log_root,
-			placeholder_job_id, requested_slurm_constraint, requested_slurm_partition, allocation_event_at,
-			cancellation_source_state
+			placeholder_job_id, requested_slurm_constraint, requested_slurm_partition,
+			requested_slurm_account, slurm_workload_user, slurm_workload_token,
+			placeholder_sif_file, allocation_event_at, cancellation_source_state
 		FROM executions`)
 	} else {
 		rows, err = s.db.Query(`SELECT
@@ -91,8 +95,9 @@ func (s *SQLiteStore) ListExecutions(_ context.Context, nodeName string) ([]*dom
 			current_state, desired_owner, previous_owner, state_version,
 			overall_status, lock_acquired_at, lock_released_at,
 			final_error_code, final_error_summary, log_root,
-			placeholder_job_id, requested_slurm_constraint, requested_slurm_partition, allocation_event_at,
-			cancellation_source_state
+			placeholder_job_id, requested_slurm_constraint, requested_slurm_partition,
+			requested_slurm_account, slurm_workload_user, slurm_workload_token,
+			placeholder_sif_file, allocation_event_at, cancellation_source_state
 		FROM executions WHERE node_name = ?`, nodeName)
 	}
 	if err != nil {
@@ -117,8 +122,9 @@ func (s *SQLiteStore) ListActiveExecutions(_ context.Context) ([]*domain.Executi
 		current_state, desired_owner, previous_owner, state_version,
 		overall_status, lock_acquired_at, lock_released_at,
 		final_error_code, final_error_summary, log_root,
-		placeholder_job_id, requested_slurm_constraint, requested_slurm_partition, allocation_event_at,
-		cancellation_source_state
+		placeholder_job_id, requested_slurm_constraint, requested_slurm_partition,
+		requested_slurm_account, slurm_workload_user, slurm_workload_token,
+		placeholder_sif_file, allocation_event_at, cancellation_source_state
 	FROM executions WHERE overall_status = ?`, string(domain.OverallStatusActive))
 	if err != nil {
 		return nil, err
@@ -142,15 +148,17 @@ func (s *SQLiteStore) UpdateExecution(_ context.Context, exec *domain.Execution)
 		current_state = ?, desired_owner = ?, previous_owner = ?, state_version = ?,
 		overall_status = ?, lock_acquired_at = ?, lock_released_at = ?,
 		final_error_code = ?, final_error_summary = ?, log_root = ?,
-		placeholder_job_id = ?, requested_slurm_constraint = ?, requested_slurm_partition = ?, allocation_event_at = ?,
-		cancellation_source_state = ?
+		placeholder_job_id = ?, requested_slurm_constraint = ?, requested_slurm_partition = ?,
+		requested_slurm_account = ?, slurm_workload_user = ?, slurm_workload_token = ?,
+		placeholder_sif_file = ?, allocation_event_at = ?, cancellation_source_state = ?
 	WHERE id = ?`,
 		exec.NodeName, string(exec.Direction), exec.RequestedBy, exec.RequestedAt,
 		string(exec.CurrentState), string(exec.DesiredOwner), string(exec.PreviousOwner), exec.StateVersion,
 		string(exec.OverallStatus), nullTime(exec.LockAcquiredAt), nullTime(exec.LockReleasedAt),
 		exec.FinalErrorCode, exec.FinalErrorSummary, exec.LogRoot,
-		exec.PlaceholderJobID, exec.RequestedSlurmConstraint, exec.RequestedSlurmPartition, nullTime(exec.AllocationEventAt),
-		string(exec.CancellationSourceState),
+		exec.PlaceholderJobID, exec.RequestedSlurmConstraint, exec.RequestedSlurmPartition,
+		exec.RequestedSlurmAccount, exec.SlurmWorkloadUser, exec.SlurmWorkloadToken,
+		exec.PlaceholderSIFFile, nullTime(exec.AllocationEventAt), string(exec.CancellationSourceState),
 		exec.ID,
 	)
 	if err != nil {
@@ -320,8 +328,9 @@ func scanExecution(row *sql.Row) (*domain.Execution, error) {
 		&exec.CurrentState, &exec.DesiredOwner, &exec.PreviousOwner, &exec.StateVersion,
 		&exec.OverallStatus, &lockAcquired, &lockReleased,
 		&exec.FinalErrorCode, &exec.FinalErrorSummary, &exec.LogRoot,
-		&exec.PlaceholderJobID, &exec.RequestedSlurmConstraint, &exec.RequestedSlurmPartition, &allocEvent,
-		&exec.CancellationSourceState,
+		&exec.PlaceholderJobID, &exec.RequestedSlurmConstraint, &exec.RequestedSlurmPartition,
+		&exec.RequestedSlurmAccount, &exec.SlurmWorkloadUser, &exec.SlurmWorkloadToken,
+		&exec.PlaceholderSIFFile, &allocEvent, &exec.CancellationSourceState,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
@@ -349,8 +358,9 @@ func scanExecutionRows(rows *sql.Rows) (*domain.Execution, error) {
 		&exec.CurrentState, &exec.DesiredOwner, &exec.PreviousOwner, &exec.StateVersion,
 		&exec.OverallStatus, &lockAcquired, &lockReleased,
 		&exec.FinalErrorCode, &exec.FinalErrorSummary, &exec.LogRoot,
-		&exec.PlaceholderJobID, &exec.RequestedSlurmConstraint, &exec.RequestedSlurmPartition, &allocEvent,
-		&exec.CancellationSourceState,
+		&exec.PlaceholderJobID, &exec.RequestedSlurmConstraint, &exec.RequestedSlurmPartition,
+		&exec.RequestedSlurmAccount, &exec.SlurmWorkloadUser, &exec.SlurmWorkloadToken,
+		&exec.PlaceholderSIFFile, &allocEvent, &exec.CancellationSourceState,
 	)
 	if err != nil {
 		return nil, err
@@ -405,6 +415,26 @@ func ensureExecutionColumns(db *sql.DB) error {
 	}
 	if !existing["cancellation_source_state"] {
 		if _, err := db.Exec(`ALTER TABLE executions ADD COLUMN cancellation_source_state TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !existing["requested_slurm_account"] {
+		if _, err := db.Exec(`ALTER TABLE executions ADD COLUMN requested_slurm_account TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !existing["slurm_workload_user"] {
+		if _, err := db.Exec(`ALTER TABLE executions ADD COLUMN slurm_workload_user TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !existing["slurm_workload_token"] {
+		if _, err := db.Exec(`ALTER TABLE executions ADD COLUMN slurm_workload_token TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !existing["placeholder_sif_file"] {
+		if _, err := db.Exec(`ALTER TABLE executions ADD COLUMN placeholder_sif_file TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
 	}

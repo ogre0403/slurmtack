@@ -56,7 +56,7 @@ func (p *recordingEventPublisher) PublishNodeSelected(ctx context.Context, execu
 
 func TestRequestSwitchPersistsSlurmPartition(t *testing.T) {
 	s := store.NewMemoryStore()
-	svc := NewSwitchService(s, nil)
+	svc := NewSwitchService(s, nil).WithSlurmWorkloadDefaults("cloud-user", "default-token").WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif")
 
 	id, err := svc.RequestSwitch(context.Background(), SwitchRequest{
 		Direction:       domain.DirectionSlurmToOpenStack,
@@ -82,7 +82,7 @@ func TestRequestSwitchPersistsSlurmPartition(t *testing.T) {
 
 func TestRequestSwitchLeavesSlurmPartitionEmptyWhenOmitted(t *testing.T) {
 	s := store.NewMemoryStore()
-	svc := NewSwitchService(s, nil)
+	svc := NewSwitchService(s, nil).WithSlurmWorkloadDefaults("cloud-user", "default-token").WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif")
 
 	id, err := svc.RequestSwitch(context.Background(), SwitchRequest{
 		Direction:       domain.DirectionSlurmToOpenStack,
@@ -288,7 +288,7 @@ func TestRequestSwitchRejectsSlurmToOpenStackWithNodeName(t *testing.T) {
 func TestRequestSwitchPublishesRequestedEventAfterPersistence(t *testing.T) {
 	s := store.NewMemoryStore()
 	publisher := &recordingEventPublisher{store: s}
-	svc := NewSwitchService(s, nil, publisher)
+	svc := NewSwitchService(s, nil, publisher).WithSlurmWorkloadDefaults("cloud-user", "default-token").WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif")
 
 	id, err := svc.RequestSwitch(context.Background(), SwitchRequest{
 		Direction:   domain.DirectionSlurmToOpenStack,
@@ -367,5 +367,212 @@ func TestRequestSwitchLogsNodeSelectedPublishFailureWithoutFailingRequest(t *tes
 	}
 	if !strings.Contains(logs.String(), "request.node_selected_publish_failed") {
 		t.Fatalf("expected request.node_selected_publish_failed in logs, got %q", logs.String())
+	}
+}
+
+func TestRequestSwitchRejectsIncompleteCredentialOverride(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil).WithSlurmWorkloadDefaults("cloud-user", "default-token").WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif")
+
+	_, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:   domain.DirectionSlurmToOpenStack,
+		RequestedBy: "operator-1",
+		SlurmUser:   "alice",
+	})
+	if !errors.Is(err, ErrInvalidSwitchRequest) {
+		t.Fatalf("RequestSwitch() error = %v, want ErrInvalidSwitchRequest", err)
+	}
+	if !strings.Contains(err.Error(), "slurm_user and slurm_user_token must be provided together") {
+		t.Fatalf("RequestSwitch() error = %q, want pairwise requirement message", err.Error())
+	}
+}
+
+func TestRequestSwitchRejectsMissingEffectiveWorkloadIdentity(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil).WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif") // no workload defaults
+
+	_, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:   domain.DirectionSlurmToOpenStack,
+		RequestedBy: "operator-1",
+	})
+	if !errors.Is(err, ErrInvalidSwitchRequest) {
+		t.Fatalf("RequestSwitch() error = %v, want ErrInvalidSwitchRequest", err)
+	}
+	if !strings.Contains(err.Error(), "slurm workload user and token are required") {
+		t.Fatalf("RequestSwitch() error = %q, want workload identity requirement message", err.Error())
+	}
+
+	executions, _ := s.ListExecutions(context.Background(), "")
+	if len(executions) != 0 {
+		t.Fatalf("execution count = %d, want 0", len(executions))
+	}
+}
+
+func TestRequestSwitchAcceptsRequestScopedCredentials(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil).WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif") // no daemon workload defaults needed
+
+	id, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:      domain.DirectionSlurmToOpenStack,
+		RequestedBy:    "operator-1",
+		SlurmUser:      "alice",
+		SlurmUserToken: "jwt-123",
+		SlurmAccount:   "proj-123",
+	})
+	if err != nil {
+		t.Fatalf("RequestSwitch() error = %v", err)
+	}
+
+	exec, err := s.GetExecution(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetExecution() error = %v", err)
+	}
+	if exec.SlurmWorkloadUser != "alice" {
+		t.Fatalf("SlurmWorkloadUser = %q, want alice", exec.SlurmWorkloadUser)
+	}
+	if exec.SlurmWorkloadToken != "jwt-123" {
+		t.Fatalf("SlurmWorkloadToken = %q, want jwt-123", exec.SlurmWorkloadToken)
+	}
+	if exec.RequestedSlurmAccount != "proj-123" {
+		t.Fatalf("RequestedSlurmAccount = %q, want proj-123", exec.RequestedSlurmAccount)
+	}
+}
+
+func TestRequestSwitchFallsBackToDaemonDefaults(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil).WithSlurmWorkloadDefaults("cloud-user", "daemon-token").WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif")
+
+	id, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:   domain.DirectionSlurmToOpenStack,
+		RequestedBy: "operator-1",
+	})
+	if err != nil {
+		t.Fatalf("RequestSwitch() error = %v", err)
+	}
+
+	exec, err := s.GetExecution(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetExecution() error = %v", err)
+	}
+	if exec.SlurmWorkloadUser != "cloud-user" {
+		t.Fatalf("SlurmWorkloadUser = %q, want cloud-user", exec.SlurmWorkloadUser)
+	}
+	if exec.SlurmWorkloadToken != "daemon-token" {
+		t.Fatalf("SlurmWorkloadToken = %q, want daemon-token", exec.SlurmWorkloadToken)
+	}
+}
+
+func TestRequestSwitchUsesDefaultPlaceholderSIFFile(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil).
+		WithSlurmWorkloadDefaults("cloud-user", "token").
+		WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif")
+
+	id, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:   domain.DirectionSlurmToOpenStack,
+		RequestedBy: "operator-1",
+	})
+	if err != nil {
+		t.Fatalf("RequestSwitch() error = %v", err)
+	}
+
+	exec, err := s.GetExecution(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetExecution() error = %v", err)
+	}
+	if exec.PlaceholderSIFFile != "placeholder-agent.sif" {
+		t.Fatalf("PlaceholderSIFFile = %q, want placeholder-agent.sif", exec.PlaceholderSIFFile)
+	}
+}
+
+func TestRequestSwitchUsesRequestOverridePlaceholderSIFFile(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil).
+		WithSlurmWorkloadDefaults("cloud-user", "token").
+		WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif")
+
+	id, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:          domain.DirectionSlurmToOpenStack,
+		RequestedBy:        "operator-1",
+		PlaceholderSIFFile: "placeholder-agent-debug.sif",
+	})
+	if err != nil {
+		t.Fatalf("RequestSwitch() error = %v", err)
+	}
+
+	exec, err := s.GetExecution(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetExecution() error = %v", err)
+	}
+	if exec.PlaceholderSIFFile != "placeholder-agent-debug.sif" {
+		t.Fatalf("PlaceholderSIFFile = %q, want placeholder-agent-debug.sif", exec.PlaceholderSIFFile)
+	}
+}
+
+func TestRequestSwitchRejectsInvalidPlaceholderSIFFile(t *testing.T) {
+	tests := []struct {
+		name string
+		file string
+	}{
+		{name: "path traversal", file: "../other-user/agent.sif"},
+		{name: "absolute path", file: "/etc/agent.sif"},
+		{name: "contains slash", file: "subdir/agent.sif"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := store.NewMemoryStore()
+			svc := NewSwitchService(s, nil).
+				WithSlurmWorkloadDefaults("cloud-user", "token").
+				WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif")
+
+			_, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+				Direction:          domain.DirectionSlurmToOpenStack,
+				RequestedBy:        "operator-1",
+				PlaceholderSIFFile: tt.file,
+			})
+			if !errors.Is(err, ErrInvalidSwitchRequest) {
+				t.Fatalf("RequestSwitch() error = %v, want ErrInvalidSwitchRequest", err)
+			}
+			if !strings.Contains(err.Error(), "placeholder_sif_file must be a simple filename") {
+				t.Fatalf("RequestSwitch() error = %q, want simple filename message", err.Error())
+			}
+		})
+	}
+}
+
+func TestRequestSwitchRejectsMissingPlaceholderSIFFile(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil).
+		WithSlurmWorkloadDefaults("cloud-user", "token").
+		WithPlaceholderSIFDefaults("slurmtack/build/output", "") // no default file
+
+	_, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:   domain.DirectionSlurmToOpenStack,
+		RequestedBy: "operator-1",
+	})
+	if !errors.Is(err, ErrInvalidSwitchRequest) {
+		t.Fatalf("RequestSwitch() error = %v, want ErrInvalidSwitchRequest", err)
+	}
+	if !strings.Contains(err.Error(), "placeholder SIF filename is required") {
+		t.Fatalf("RequestSwitch() error = %q, want filename requirement message", err.Error())
+	}
+}
+
+func TestRequestSwitchRejectsMissingPlaceholderSIFPathConfig(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil).
+		WithSlurmWorkloadDefaults("cloud-user", "token") // no placeholder SIF defaults
+
+	_, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:          domain.DirectionSlurmToOpenStack,
+		RequestedBy:        "operator-1",
+		PlaceholderSIFFile: "placeholder-agent.sif",
+	})
+	if !errors.Is(err, ErrInvalidSwitchRequest) {
+		t.Fatalf("RequestSwitch() error = %v, want ErrInvalidSwitchRequest", err)
+	}
+	if !strings.Contains(err.Error(), "placeholder SIF path configuration is invalid or missing") {
+		t.Fatalf("RequestSwitch() error = %q, want path config message", err.Error())
 	}
 }

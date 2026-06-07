@@ -21,6 +21,10 @@ type Execution struct {
 	PlaceholderJobID          string
 	RequestedSlurmConstraint  string
 	RequestedSlurmPartition   string
+	RequestedSlurmAccount     string
+	SlurmWorkloadUser         string
+	SlurmWorkloadToken        string
+	PlaceholderSIFFile        string
 	AllocationEventAt         *time.Time
 	CancellationSourceState   SwitchState
 }

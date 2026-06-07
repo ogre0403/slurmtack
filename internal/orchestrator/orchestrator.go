@@ -23,9 +23,11 @@ type worker struct {
 }
 
 type Config struct {
-	TickInterval    time.Duration
-	SSHPollInterval time.Duration
-	SSHPollTimeout  time.Duration
+	TickInterval           time.Duration
+	SSHPollInterval        time.Duration
+	SSHPollTimeout         time.Duration
+	PlaceholderSIFPath     string
+	PlaceholderSIFFile     string
 }
 
 type Orchestrator struct {
@@ -463,10 +465,18 @@ func (o *Orchestrator) doSubmitPlaceholder(ctx context.Context, exec *domain.Exe
 	if o.slurm == nil {
 		return errors.New("slurm client not configured")
 	}
+	effectiveSIFFile := exec.PlaceholderSIFFile
+	if effectiveSIFFile == "" {
+		effectiveSIFFile = o.cfg.PlaceholderSIFFile
+	}
 	result, err := o.slurm.SubmitPlaceholderJob(ctx, slurm.PlaceholderJobRequest{
-		ExecutionID: exec.ID,
-		Constraint:  exec.RequestedSlurmConstraint,
-		Partition:   exec.RequestedSlurmPartition,
+		ExecutionID:        exec.ID,
+		Constraint:         exec.RequestedSlurmConstraint,
+		Partition:          exec.RequestedSlurmPartition,
+		Account:            exec.RequestedSlurmAccount,
+		WorkloadUser:       exec.SlurmWorkloadUser,
+		WorkloadToken:      exec.SlurmWorkloadToken,
+		PlaceholderSIFFile: effectiveSIFFile,
 	})
 	if err != nil {
 		return err
@@ -741,7 +751,7 @@ func (o *Orchestrator) doCancelCleanup(ctx context.Context, exec *domain.Executi
 			if o.slurm == nil {
 				return errors.New("slurm client not configured")
 			}
-			if err := o.slurm.CancelJob(ctx, exec.PlaceholderJobID); err != nil {
+			if err := o.cancelJobWithExecIdentity(ctx, exec); err != nil {
 				return fmt.Errorf("cancelling placeholder job %s: %w", exec.PlaceholderJobID, err)
 			}
 		}
@@ -756,7 +766,7 @@ func (o *Orchestrator) doCancelCleanup(ctx context.Context, exec *domain.Executi
 				return fmt.Errorf("resuming slurm node: %w", err)
 			}
 			if exec.PlaceholderJobID != "" {
-				if err := o.slurm.CancelJob(ctx, exec.PlaceholderJobID); err != nil {
+				if err := o.cancelJobWithExecIdentity(ctx, exec); err != nil {
 					return fmt.Errorf("cancelling placeholder job %s: %w", exec.PlaceholderJobID, err)
 				}
 			}
@@ -802,6 +812,16 @@ func (o *Orchestrator) doCancelCleanup(ctx context.Context, exec *domain.Executi
 		"final_error_code", "cancelled_by_user",
 	)
 	return nil
+}
+
+func (o *Orchestrator) cancelJobWithExecIdentity(ctx context.Context, exec *domain.Execution) error {
+	if exec.SlurmWorkloadUser != "" && exec.SlurmWorkloadToken != "" {
+		return o.slurm.CancelJobWithIdentity(ctx, exec.PlaceholderJobID, slurm.WorkloadIdentity{
+			User:  exec.SlurmWorkloadUser,
+			Token: exec.SlurmWorkloadToken,
+		})
+	}
+	return o.slurm.CancelJob(ctx, exec.PlaceholderJobID)
 }
 
 func classifyFailure(state domain.SwitchState) domain.FailureClass {

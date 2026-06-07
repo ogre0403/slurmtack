@@ -28,6 +28,10 @@ func (f *fakeSlurmCancelClient) GetNodeState(_ context.Context, _ string) (*slur
 	return nil, nil
 }
 
+func (f *fakeSlurmCancelClient) GetNodeStateWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.NodeState, error) {
+	return nil, nil
+}
+
 func (f *fakeSlurmCancelClient) DrainNode(_ context.Context, _, _ string) error {
 	return nil
 }
@@ -38,6 +42,11 @@ func (f *fakeSlurmCancelClient) ResumeNode(_ context.Context, _ string) error {
 }
 
 func (f *fakeSlurmCancelClient) CancelJob(_ context.Context, jobID string) error {
+	f.cancelJobIDs = append(f.cancelJobIDs, jobID)
+	return f.cancelJobErr
+}
+
+func (f *fakeSlurmCancelClient) CancelJobWithIdentity(_ context.Context, jobID string, _ slurm.WorkloadIdentity) error {
 	f.cancelJobIDs = append(f.cancelJobIDs, jobID)
 	return f.cancelJobErr
 }

@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS executions (
     placeholder_job_id TEXT NOT NULL DEFAULT '',
     requested_slurm_constraint TEXT NOT NULL DEFAULT '',
     requested_slurm_partition TEXT NOT NULL DEFAULT '',
+    requested_slurm_account TEXT NOT NULL DEFAULT '',
+    slurm_workload_user TEXT NOT NULL DEFAULT '',
+    slurm_workload_token TEXT NOT NULL DEFAULT '',
+    placeholder_sif_file TEXT NOT NULL DEFAULT '',
     allocation_event_at DATETIME,
     cancellation_source_state TEXT NOT NULL DEFAULT ''
 );

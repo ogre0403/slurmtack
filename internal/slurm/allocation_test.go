@@ -23,6 +23,10 @@ func (f *captureAllocationClient) GetNodeState(_ context.Context, nodeName strin
 	return nil, nil
 }
 
+func (f *captureAllocationClient) GetNodeStateWithIdentity(_ context.Context, _ string, _ WorkloadIdentity) (*NodeState, error) {
+	return nil, nil
+}
+
 func (f *captureAllocationClient) DrainNode(_ context.Context, nodeName, reason string) error {
 	return nil
 }
@@ -32,6 +36,10 @@ func (f *captureAllocationClient) ResumeNode(_ context.Context, nodeName string)
 }
 
 func (f *captureAllocationClient) CancelJob(_ context.Context, jobID string) error {
+	return nil
+}
+
+func (f *captureAllocationClient) CancelJobWithIdentity(_ context.Context, _ string, _ WorkloadIdentity) error {
 	return nil
 }
 

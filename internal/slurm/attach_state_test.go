@@ -23,6 +23,11 @@ func (c *captureAttachClient) GetNodeState(_ context.Context, _ string) (*NodeSt
 	return c.nodeState, nil
 }
 
+func (c *captureAttachClient) GetNodeStateWithIdentity(_ context.Context, _ string, _ WorkloadIdentity) (*NodeState, error) {
+	c.getNodeStateCalls++
+	return c.nodeState, nil
+}
+
 func (c *captureAttachClient) DrainNode(_ context.Context, _, _ string) error { return nil }
 
 func (c *captureAttachClient) ResumeNode(_ context.Context, _ string) error {
@@ -31,6 +36,10 @@ func (c *captureAttachClient) ResumeNode(_ context.Context, _ string) error {
 }
 
 func (c *captureAttachClient) CancelJob(_ context.Context, _ string) error { return nil }
+
+func (c *captureAttachClient) CancelJobWithIdentity(_ context.Context, _ string, _ WorkloadIdentity) error {
+	return nil
+}
 
 func (c *captureAttachClient) ListPartitions(_ context.Context) ([]Partition, error) {
 	return nil, nil

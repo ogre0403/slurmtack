@@ -1,55 +1,12 @@
-## ADDED Requirements
-
-### Requirement: Multi-stage Docker build
-
-The Dockerfile SHALL use a multi-stage build: a build stage with Go toolchain and gcc (for CGO/SQLite), and a runtime stage based on alpine with only the compiled binary and CA certificates.
-
-#### Scenario: Build produces minimal image
-
-- **WHEN** docker build is run
-- **THEN** the final image contains only the slurmtack binary, CA certs, and a non-root user
-
-#### Scenario: Binary is statically usable
-
-- **WHEN** the container starts
-- **THEN** the binary runs without missing shared libraries (static linking or musl-compatible)
-
-### Requirement: Docker Compose stack
-
-The docker-compose.yaml SHALL define at minimum three services: `nginx`, `slurmtack`, and `rabbitmq`. The services MUST communicate over a user-defined bridge network instead of `network_mode: host`. `nginx` MUST publish the stack's browser-facing HTTP port to the host and serve as the only public entrypoint for the validation page and proxied health API. `slurmtack` MUST NOT publish any host port and MUST be reachable only from the compose network, where nginx proxies `GET /api/health` to the daemon's internal `GET /health` endpoint. `rabbitmq` MUST remain available on host ports 5672 and 15672 while also participating in the compose network for service-to-service traffic.
-
-#### Scenario: Stack starts with nginx as public entrypoint
-
-- **WHEN** `docker-compose up` is run on the staging host
-- **THEN** `nginx`, `slurmtack`, and `rabbitmq` all start successfully
-- **AND** the validation page is reachable through nginx on the published HTTP port
-- **AND** `GET /api/health` succeeds through nginx without requiring direct host access to slurmtack
-
-#### Scenario: Slurmtack is not directly exposed to the host
-
-- **WHEN** the stack is running
-- **THEN** the compose definition exposes no host port mapping for the `slurmtack` service
-- **AND** browser or host access must go through nginx to reach the daemon HTTP surface
-
-#### Scenario: RabbitMQ remains externally reachable
-
-- **WHEN** the stack is running
-- **THEN** RabbitMQ management UI is accessible on port 15672 and AMQP is accessible on port 5672
-
-### Requirement: SQLite data persistence
-
-The docker-compose.yaml SHALL define a volume mount for the SQLite database file so that data survives container restarts.
-
-#### Scenario: Data survives restart
-
-- **WHEN** an execution is created via API, then `docker-compose restart slurmtack` is run
-- **THEN** the execution is still queryable via GET /v1/switches/:id after restart
+## MODIFIED Requirements
 
 ### Requirement: Environment-based configuration
 
-The daemon SHALL read all configuration from environment variables. Required variables: `API_TOKEN`, `LISTEN_ADDR`, `DB_PATH`. Optional integration variables: `SLURM_API_URL`, `SLURM_JWT_TOKEN`, `SLURM_API_USER`, `SLURM_ADMIN_USER`, `SLURM_ADMIN_JWT_TOKEN`, `OS_AUTH_URL`, `OS_PROJECT_NAME`, `OS_USERNAME`, `OS_PASSWORD`, `AMQP_URL`, `SSH_USER`, `SSH_PORT`, `SSH_OPTIONS`, `SSH_PRIVATE_KEY_PATH`, `SSH_POLL_INTERVAL`, and `SSH_POLL_TIMEOUT`.
+The daemon SHALL read all configuration from environment variables. Required variables: `API_TOKEN`, `LISTEN_ADDR`, `DB_PATH`. Optional integration variables: `SLURM_API_URL`, `SLURM_JWT_TOKEN`, `SLURM_API_USER`, `SLURM_ADMIN_USER`, `SLURM_ADMIN_JWT_TOKEN`, `OS_AUTH_URL`, `OS_PROJECT_NAME`, `OS_USERNAME`, `OS_PASSWORD`, `AMQP_URL`, `PLACEHOLDER_SIF_PATH`, `PLACEHOLDER_SIF_FILE`, `SSH_USER`, `SSH_PORT`, `SSH_OPTIONS`, `SSH_PRIVATE_KEY_PATH`, `SSH_POLL_INTERVAL`, and `SSH_POLL_TIMEOUT`.
 
-If `SLURM_API_URL` is set, the daemon MUST treat `SLURM_JWT_TOKEN` as the workload token for Slurm API calls. `SLURM_API_USER` defaults to `cloud-user` when unset. `SLURM_ADMIN_USER` defaults to `SLURM_API_USER`, and `SLURM_ADMIN_JWT_TOKEN` defaults to `SLURM_JWT_TOKEN`.
+If `SLURM_API_URL` is set, the daemon MUST treat `SLURM_API_USER` and `SLURM_JWT_TOKEN` as the default workload identity for Slurm API calls when a request or execution does not carry an explicit workload override. `SLURM_API_USER` defaults to `cloud-user` when unset. `SLURM_ADMIN_USER` defaults to `SLURM_API_USER`, and `SLURM_ADMIN_JWT_TOKEN` defaults to `SLURM_JWT_TOKEN`. Missing default workload credentials MUST NOT prevent daemon startup by themselves; instead, any request or execution that cannot resolve a complete workload identity at runtime MUST fail with a clear error before workload-scoped Slurm operations are attempted.
+
+If `PLACEHOLDER_SIF_PATH` is set, the daemon MUST interpret it as a directory path relative to `/home/<effective-workload-user>`. A configured placeholder SIF path MUST NOT be absolute, empty, or contain traversal segments such as `..`. `PLACEHOLDER_SIF_FILE` is the default placeholder SIF basename used when a `slurm_to_openstack` request omits `placeholder_sif_file`. Missing placeholder SIF defaults MUST NOT prevent daemon startup by themselves; instead, any `slurm_to_openstack` request that cannot resolve both a valid home-relative placeholder SIF directory and an effective filename at runtime MUST fail with a clear error before creating an execution.
 
 If any of `SSH_USER`, `SSH_PORT`, `SSH_OPTIONS`, or `SSH_PRIVATE_KEY_PATH` are set, the daemon MUST treat SSH runner configuration as enabled. When SSH runner configuration is enabled, `SSH_PRIVATE_KEY_PATH` MUST be set and reference a readable private key file. The daemon MUST construct an SSH runner from the configured SSH transport values and supply it to the orchestrator for reboot and reachability actions.
 
@@ -66,12 +23,41 @@ If any of `SSH_USER`, `SSH_PORT`, `SSH_OPTIONS`, or `SSH_PRIVATE_KEY_PATH` are s
 #### Scenario: Daemon uses dedicated admin Slurm credentials
 
 - **WHEN** `SLURM_ADMIN_USER` and `SLURM_ADMIN_JWT_TOKEN` are set together with workload Slurm configuration
-- **THEN** daemon uses the admin identity for drain and resume calls while keeping workload identity for job submission, cancellation, and default node reads
+- **THEN** daemon uses the admin identity for drain, resume, default node reads, partition list, and default cancellations, while keeping workload identity for job submission and identity-scoped/execution-scoped operations.
 
-#### Scenario: Missing workload token
+#### Scenario: Daemon starts without a default workload token
 
 - **WHEN** `SLURM_API_URL` is set but `SLURM_JWT_TOKEN` is not set
-- **THEN** daemon exits with a clear error message indicating which Slurm variable is missing
+- **THEN** daemon still starts successfully
+- **AND** only requests or executions that provide or resolve another complete workload identity may perform workload-scoped Slurm operations
+
+#### Scenario: Request fails when no runtime workload identity can be resolved
+
+- **WHEN** `SLURM_API_URL` is set, `SLURM_JWT_TOKEN` is unset, and a `slurm_to_openstack` request does not provide `slurm_user` and `slurm_user_token`
+- **THEN** the daemon returns a clear error for that request instead of failing startup
+
+#### Scenario: Daemon starts with placeholder SIF defaults
+
+- **WHEN** `PLACEHOLDER_SIF_PATH=slurmtack/build/output` and `PLACEHOLDER_SIF_FILE=placeholder-agent.sif` are set
+- **THEN** daemon starts successfully
+- **AND** `slurm_to_openstack` requests may omit `placeholder_sif_file` and use the configured default filename
+
+#### Scenario: Daemon starts without a default placeholder SIF filename
+
+- **WHEN** `PLACEHOLDER_SIF_PATH=slurmtack/build/output` is set and `PLACEHOLDER_SIF_FILE` is unset
+- **THEN** daemon still starts successfully
+- **AND** only `slurm_to_openstack` requests that provide `placeholder_sif_file` can create executions
+
+#### Scenario: Daemon starts without placeholder SIF path configuration
+
+- **WHEN** `PLACEHOLDER_SIF_PATH` is unset
+- **THEN** daemon still starts successfully
+- **AND** `slurm_to_openstack` requests fail until a valid home-relative placeholder SIF path is configured
+
+#### Scenario: Invalid placeholder SIF path config
+
+- **WHEN** `PLACEHOLDER_SIF_PATH=/shared/images` or `PLACEHOLDER_SIF_PATH=../images`
+- **THEN** daemon exits with a clear error indicating that `PLACEHOLDER_SIF_PATH` must be a home-relative directory
 
 #### Scenario: Daemon starts with SSH runner config
 
@@ -82,21 +68,3 @@ If any of `SSH_USER`, `SSH_PORT`, `SSH_OPTIONS`, or `SSH_PRIVATE_KEY_PATH` are s
 
 - **WHEN** any of `SSH_USER`, `SSH_PORT`, or `SSH_OPTIONS` are set but `SSH_PRIVATE_KEY_PATH` is unset or unreadable
 - **THEN** daemon exits with a clear error message indicating that `SSH_PRIVATE_KEY_PATH` is required for SSH runner configuration
-
-### Requirement: Graceful shutdown
-
-The daemon SHALL handle SIGTERM and SIGINT by stopping acceptance of new requests, waiting for in-flight requests to complete (with a timeout), and closing the database connection cleanly.
-
-#### Scenario: Shutdown on SIGTERM
-
-- **WHEN** SIGTERM is sent to the daemon process
-- **THEN** daemon stops accepting new connections, finishes in-flight requests within 10 seconds, closes the DB, and exits 0
-
-### Requirement: Docker Compose environment file
-
-The docker-compose.yaml SHALL reference an `.env` file for default configuration values, allowing operators to customize without editing the compose file.
-
-#### Scenario: Custom token via .env
-
-- **WHEN** operator sets `API_TOKEN=my-secret` in `.env`
-- **THEN** the daemon requires that token for API access

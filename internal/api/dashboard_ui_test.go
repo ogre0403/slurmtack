@@ -158,8 +158,11 @@ func TestDashboardJS_SwitchPayloads(t *testing.T) {
 	if !strings.Contains(js, `direction: direction, node_name: nodeName, requested_by: requestedBy`) {
 		t.Error("openstack_to_slurm payload should include direction, node_name, and requested_by")
 	}
-	if !strings.Contains(js, `direction: 'slurm_to_openstack', requested_by: requestedBy`) {
-		t.Error("slurm_to_openstack payload should include direction and requested_by")
+	if !strings.Contains(js, `direction: 'slurm_to_openstack'`) {
+		t.Error("slurm_to_openstack payload should include direction")
+	}
+	if !strings.Contains(js, `requested_by: requestedBy`) {
+		t.Error("slurm_to_openstack payload should include requested_by")
 	}
 	if !strings.Contains(js, `slurm_partition`) {
 		t.Error("slurm_to_openstack should support slurm_partition")
@@ -254,6 +257,112 @@ func TestDashboardJS_CancelRefreshesPageAndDetail(t *testing.T) {
 	}
 	if !strings.Contains(js, "if (state.selectedExecutionId) openDetail(state.selectedExecutionId)") {
 		t.Error("cancelExecution should refresh the selected execution detail after successful cancel")
+	}
+}
+
+func TestDashboardHTML_SlurmSettingsRegion(t *testing.T) {
+	htmlPath := "../../docker/nginx/html/index.html"
+	content, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("reading dashboard HTML: %v", err)
+	}
+	html := string(content)
+
+	required := []string{
+		`id="slurm-settings-btn"`,
+		`id="slurm-settings-panel"`,
+		`id="slurm-token-input"`,
+		`id="slurm-derived-user"`,
+		`id="slurm-account-input"`,
+		`id="slurm-sif-input"`,
+		`id="slurm-settings-validation"`,
+		`id="slurm-settings-save"`,
+		`id="slurm-settings-clear"`,
+		`toggleSlurmSettings()`,
+	}
+	for _, s := range required {
+		if !strings.Contains(html, s) {
+			t.Errorf("dashboard HTML missing Slurm settings element: %s", s)
+		}
+	}
+}
+
+func TestDashboardJS_SlurmSettingsPersistence(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	required := []string{
+		"slurmtack_slurm_settings",
+		"loadSlurmSettingsFromStorage",
+		"saveSlurmSettings",
+		"clearSlurmSettings",
+		"localStorage.setItem(SLURM_SETTINGS_KEY",
+		"localStorage.removeItem(SLURM_SETTINGS_KEY)",
+	}
+	for _, s := range required {
+		if !strings.Contains(js, s) {
+			t.Errorf("dashboard JS missing Slurm settings persistence hook: %s", s)
+		}
+	}
+}
+
+func TestDashboardJS_SlurmSettingsBlocking(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "getSlurmSettingsValidation") {
+		t.Error("dashboard JS should define getSlurmSettingsValidation for blocking incomplete settings")
+	}
+	if !strings.Contains(js, "isSlurmSettingsComplete") {
+		t.Error("dashboard JS should define isSlurmSettingsComplete")
+	}
+	if !strings.Contains(js, "Cannot start slurm_to_openstack") {
+		t.Error("dashboard JS should show blocking message when Slurm settings are incomplete")
+	}
+}
+
+func TestDashboardJS_SlurmSettingsPayloadFields(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	requiredFields := []string{
+		"slurm_account: state.slurmSettings.slurm_account",
+		"placeholder_sif_file: state.slurmSettings.placeholder_sif_file",
+		"slurm_user: state.slurmDerivedUser",
+		"slurm_user_token: state.slurmSettings.slurm_user_token",
+	}
+	for _, s := range requiredFields {
+		if !strings.Contains(js, s) {
+			t.Errorf("slurm_to_openstack payload missing field: %s", s)
+		}
+	}
+}
+
+func TestDashboardJS_JWTDecodeDerivedUser(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "decodeSlurmUser") {
+		t.Error("dashboard JS should define decodeSlurmUser for JWT payload decoding")
+	}
+	if !strings.Contains(js, "payload.sun || payload.username || payload.preferred_username || payload.sub") {
+		t.Error("decodeSlurmUser should use documented claim precedence: sun, username, preferred_username, sub")
 	}
 }
 

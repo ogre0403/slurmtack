@@ -123,7 +123,9 @@ func setupTestServerWithStoreAndLogger(t *testing.T, logger *slog.Logger, reader
 	}
 	t.Cleanup(func() { sqlStore.Close() })
 
-	svc := service.NewSwitchService(sqlStore, nil)
+	svc := service.NewSwitchService(sqlStore, nil).
+		WithSlurmWorkloadDefaults("cloud-user", "test-token").
+		WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder-agent.sif")
 	if len(readers) > 0 {
 		svc = svc.WithSlurmNodeStateReader(readers[0])
 	}
@@ -404,6 +406,63 @@ func TestGetSwitchNotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestGetSwitchExposesRequestedSlurmAccount(t *testing.T) {
+	srv := setupTestServer(t)
+
+	body := `{"direction":"slurm_to_openstack","requested_by":"op","slurm_account":"proj-123","slurm_user":"alice","slurm_user_token":"jwt-abc"}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	var createResp SwitchResponse
+	json.Unmarshal(w.Body.Bytes(), &createResp)
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/v1/switches/"+createResp.ExecutionID, nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var detail map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &detail)
+	if detail["requested_slurm_account"] != "proj-123" {
+		t.Fatalf("requested_slurm_account = %v, want proj-123", detail["requested_slurm_account"])
+	}
+	if _, exists := detail["slurm_workload_user"]; exists {
+		t.Fatal("slurm_workload_user should not be exposed in response")
+	}
+	if _, exists := detail["slurm_workload_token"]; exists {
+		t.Fatal("slurm_workload_token should not be exposed in response")
+	}
+}
+
+func TestCreateSlurmToOpenStackRejectsIncompleteCredentials(t *testing.T) {
+	srv := setupTestServer(t)
+
+	body := `{"direction":"slurm_to_openstack","requested_by":"op","slurm_user":"alice"}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	srv.Engine().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp ErrorResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if !strings.Contains(resp.Error, "slurm_user and slurm_user_token must be provided together") {
+		t.Fatalf("unexpected error: %s", resp.Error)
 	}
 }
 

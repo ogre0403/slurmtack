@@ -424,7 +424,7 @@ func TestRequestLogSuccessfulWorkloadRequest(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	assertSlurmRequestLog(t, logs.find("slurmrestd.request"), http.MethodGet, "/slurm/v0.0.40/node/gpu-01", "workload", "200", "")
+	assertSlurmRequestLog(t, logs.find("slurmrestd.request"), http.MethodGet, "/slurm/v0.0.40/node/gpu-01", "admin", "200", "")
 	assertNoSensitiveValues(t, logs.find("slurmrestd.request"), "workload-token")
 }
 
@@ -479,7 +479,7 @@ func TestRequestLogTransportError(t *testing.T) {
 	if rec == nil {
 		t.Fatal("expected slurmrestd.request log")
 	}
-	assertSlurmRequestLog(t, rec, http.MethodDelete, "/slurm/v0.0.40/job/1", "workload", "", "")
+	assertSlurmRequestLog(t, rec, http.MethodDelete, "/slurm/v0.0.40/job/1", "admin", "", "")
 	if rec.Attrs["error"] == "" {
 		t.Fatal("expected transport error attr")
 	}
@@ -554,5 +554,84 @@ func assertNoSensitiveValues(t *testing.T, rec *capturedRecord, forbiddenValues 
 				t.Fatalf("log attr %q leaked sensitive value %q", key, forbidden)
 			}
 		}
+	}
+}
+
+func TestSubmitPlaceholderJob_AccountAndHomePaths(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertSlurmHeaders(t, r, "alice", "jwt-override")
+
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		job := body["job"].(map[string]any)
+
+		if job["account"] != "proj-123" {
+			t.Errorf("expected account=proj-123, got %v", job["account"])
+		}
+		if job["current_working_directory"] != "/home/alice" {
+			t.Errorf("expected cwd=/home/alice, got %v", job["current_working_directory"])
+		}
+		stdout := job["standard_output"].(string)
+		if !strings.HasPrefix(stdout, "/home/alice/") {
+			t.Errorf("expected stdout under /home/alice/, got %s", stdout)
+		}
+		stderr := job["standard_error"].(string)
+		if !strings.HasPrefix(stderr, "/home/alice/") {
+			t.Errorf("expected stderr under /home/alice/, got %s", stderr)
+		}
+
+		script := body["script"].(string)
+		if !strings.Contains(script, "export SLURM_API_USER=alice") {
+			t.Error("script should export SLURM_API_USER=alice")
+		}
+		if !strings.Contains(script, "export SLURM_JWT_TOKEN=jwt-override") {
+			t.Error("script should export SLURM_JWT_TOKEN=jwt-override")
+		}
+
+		json.NewEncoder(w).Encode(jobSubmitResponse{JobID: 99})
+	}))
+	defer srv.Close()
+
+	client := NewRestClient(srv.URL, "daemon-token", WithSlurmUser("cloud-user"))
+	result, err := client.SubmitPlaceholderJob(context.Background(), PlaceholderJobRequest{
+		ExecutionID:   "exec-2",
+		Constraint:    "gpu-a100",
+		Partition:     "gpu-maint",
+		Account:       "proj-123",
+		WorkloadUser:  "alice",
+		WorkloadToken: "jwt-override",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.JobID != "99" {
+		t.Errorf("expected job_id=99, got %s", result.JobID)
+	}
+}
+
+func TestSubmitPlaceholderJob_NoAccountOmitsField(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		job := body["job"].(map[string]any)
+
+		if _, exists := job["account"]; exists {
+			t.Error("account field should not be present when not requested")
+		}
+		if job["current_working_directory"] != "/home/cloud-user" {
+			t.Errorf("expected cwd=/home/cloud-user, got %v", job["current_working_directory"])
+		}
+
+		json.NewEncoder(w).Encode(jobSubmitResponse{JobID: 100})
+	}))
+	defer srv.Close()
+
+	client := NewRestClient(srv.URL, "daemon-token")
+	_, err := client.SubmitPlaceholderJob(context.Background(), PlaceholderJobRequest{
+		ExecutionID: "exec-3",
+		Constraint:  "gpu-a100",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

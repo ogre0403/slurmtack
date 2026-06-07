@@ -122,9 +122,11 @@ func main() {
 	runner := engine.NewRunner(sqlStore, baseLogger)
 	sshRunner := buildSSHRunner(cfg, baseLogger)
 	orch := orchestrator.New(sqlStore, runner, sshRunner, slurmClient, osClient, orchestrator.Config{
-		TickInterval:    2 * time.Second,
-		SSHPollInterval: cfg.SSHPollInterval,
-		SSHPollTimeout:  cfg.SSHPollTimeout,
+		TickInterval:       2 * time.Second,
+		SSHPollInterval:    cfg.SSHPollInterval,
+		SSHPollTimeout:     cfg.SSHPollTimeout,
+		PlaceholderSIFPath: cfg.PlaceholderSIFPath,
+		PlaceholderSIFFile: cfg.PlaceholderSIFFile,
 	}, baseLogger)
 
 	// Start MQ consumer supervision.
@@ -136,6 +138,10 @@ func main() {
 	}
 
 	svc := service.NewSwitchService(sqlStore, baseLogger, publisher).WithExecutionIntake(orch)
+	if cfg.SlurmAPIURL != "" {
+		svc = svc.WithSlurmWorkloadDefaults(cfg.SlurmAPIUser, cfg.SlurmJWTToken)
+	}
+	svc = svc.WithPlaceholderSIFDefaults(cfg.PlaceholderSIFPath, cfg.PlaceholderSIFFile)
 	if slurmClient != nil {
 		svc = svc.WithSlurmNodeStateReader(slurmClient)
 	}

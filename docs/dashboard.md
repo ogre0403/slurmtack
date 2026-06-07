@@ -25,10 +25,36 @@ Each node is classified as one of:
 | `conflict` | Both Slurm and OpenStack report the node as active |
 | `unknown` | Neither control plane reports the node as active |
 
+## Slurm Job Settings
+
+The dashboard requires a complete Slurm job settings profile before it allows `slurm_to_openstack` to be triggered. The settings entry point is the **Slurm Settings** button in the top-right header area.
+
+### Required Fields
+
+| Field | Description |
+|-------|-------------|
+| Slurm User Token | A JWT issued by the Slurm authentication system. Stored in browser `localStorage`. |
+| Slurm Account | The Slurm account string (e.g. `proj-123`) used for placeholder job submission. |
+| Placeholder SIF Filename | The container image filename (e.g. `placeholder-agent-debug.sif`) for the placeholder job. |
+
+### Derived Workload User
+
+The dashboard decodes the JWT payload (without signature verification) and extracts the effective workload username using the first non-empty claim in this order: `sun`, `username`, `preferred_username`, `sub`. The derived username is displayed as read-only feedback and is never stored separately — it is recomputed from the token each time the settings panel is opened or the page loads.
+
+If the token cannot be decoded or no supported claim is present, the settings are treated as incomplete.
+
+### Browser Storage
+
+Slurm job settings are persisted in browser `localStorage` under the key `slurmtack_slurm_settings`. They survive page reloads and browser restarts. Use the **Clear** button in the settings panel to remove them.
+
+### Incomplete Settings Blocking
+
+When the Slurm job settings are incomplete (missing token, undecodable username, missing account, or missing SIF filename), the dashboard blocks `slurm_to_openstack` submission with an operator-visible message. The **Slurm Settings** button appears highlighted when the profile is incomplete.
+
 ## Switch Actions
 
 - **Switch to Slurm** (`openstack_to_slurm`): Available on node cards for nodes owned by OpenStack. Submits `POST /v1/switches` with `direction=openstack_to_slurm` and the node name.
-- **Switch to OpenStack** (`slurm_to_openstack`): Rendered in a partition-scoped action bar above the node grid (not on individual node cards) because this workflow does not support request-time node targeting. When the partition selection is `All`, the request omits `slurm_partition` so Slurm uses its default partition. When a specific partition is selected, the request includes `slurm_partition=<name>` to constrain placeholder job allocation.
+- **Switch to OpenStack** (`slurm_to_openstack`): Rendered in a partition-scoped action bar above the node grid (not on individual node cards) because this workflow does not support request-time node targeting. Requires a complete Slurm job settings profile (see above). The request includes `slurm_account`, `placeholder_sif_file`, `slurm_user` (derived from token), and `slurm_user_token`. When the partition selection is `All`, the request omits `slurm_partition` so Slurm uses its default partition. When a specific partition is selected, the request includes `slurm_partition=<name>` to constrain placeholder job allocation.
 - **Cancel**: Available on node cards with an active execution. Submits `POST /v1/switches/:id/cancel`.
 
 ## New Read Endpoints

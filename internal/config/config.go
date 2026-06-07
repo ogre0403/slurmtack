@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -26,6 +28,7 @@ type Config struct {
 	SSHPollInterval     time.Duration
 	SSHPollTimeout      time.Duration
 	PlaceholderSIFPath  string
+	PlaceholderSIFFile  string
 	SSHUser             string
 	SSHPort             string
 	SSHOptions          string
@@ -50,6 +53,7 @@ func Load() (*Config, error) {
 		OSProjectDomainName: os.Getenv("OS_PROJECT_DOMAIN_NAME"),
 		AMQPURL:             os.Getenv("AMQP_URL"),
 		PlaceholderSIFPath:  os.Getenv("PLACEHOLDER_SIF_PATH"),
+		PlaceholderSIFFile:  os.Getenv("PLACEHOLDER_SIF_FILE"),
 		SSHUser:             os.Getenv("SSH_USER"),
 		SSHPort:             os.Getenv("SSH_PORT"),
 		SSHOptions:          os.Getenv("SSH_OPTIONS"),
@@ -69,9 +73,8 @@ func Load() (*Config, error) {
 	if cfg.DBPath == "" {
 		cfg.DBPath = "slurmtack.db"
 	}
-	if cfg.SlurmAPIURL != "" && cfg.SlurmJWTToken == "" {
-		return nil, fmt.Errorf("SLURM_JWT_TOKEN is required when SLURM_API_URL is set")
-	}
+	// SLURM_JWT_TOKEN is no longer required at startup; requests that cannot
+	// resolve an effective workload identity will fail at request time instead.
 	if cfg.SlurmAPIUser == "" {
 		cfg.SlurmAPIUser = "cloud-user"
 	}
@@ -107,6 +110,11 @@ func (c *Config) validate() error {
 	if c.APIToken == "" {
 		return fmt.Errorf("required environment variable API_TOKEN is not set")
 	}
+	if c.PlaceholderSIFPath != "" {
+		if err := validatePlaceholderSIFPath(c.PlaceholderSIFPath); err != nil {
+			return err
+		}
+	}
 	if c.SSHRunnerEnabled() {
 		if c.SSHPrivateKeyPath == "" {
 			return fmt.Errorf("SSH_PRIVATE_KEY_PATH is required when SSH runner configuration is enabled")
@@ -120,6 +128,35 @@ func (c *Config) validate() error {
 		}
 	}
 	return nil
+}
+
+func validatePlaceholderSIFPath(p string) error {
+	if filepath.IsAbs(p) {
+		return fmt.Errorf("PLACEHOLDER_SIF_PATH must be a home-relative directory, not an absolute path")
+	}
+	cleaned := filepath.Clean(p)
+	for _, seg := range strings.Split(cleaned, string(filepath.Separator)) {
+		if seg == ".." {
+			return fmt.Errorf("PLACEHOLDER_SIF_PATH must be a home-relative directory and must not contain '..'")
+		}
+	}
+	return nil
+}
+
+func IsValidPlaceholderSIFFile(name string) bool {
+	if name == "" {
+		return false
+	}
+	if strings.ContainsAny(name, "/\\") {
+		return false
+	}
+	if name == "." || name == ".." {
+		return false
+	}
+	if strings.Contains(name, "..") {
+		return false
+	}
+	return true
 }
 
 func (c *Config) SSHRunnerEnabled() bool {

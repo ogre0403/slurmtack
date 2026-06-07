@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -86,6 +87,17 @@ func NewRestClient(baseURL, jwtToken string, opts ...Option) *RestClient {
 }
 
 func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJobRequest) (*PlaceholderJobResult, error) {
+	effectiveUser := c.slurmUser
+	effectiveToken := c.jwtToken
+	if req.WorkloadUser != "" && req.WorkloadToken != "" {
+		effectiveUser = req.WorkloadUser
+		effectiveToken = req.WorkloadToken
+	}
+
+	homeDir := fmt.Sprintf("/home/%s", effectiveUser)
+	resolvedSIFPath := filepath.Join(homeDir, c.placeholderSIFPath, req.PlaceholderSIFFile)
+	resolvedSIFPath = filepath.Clean(resolvedSIFPath)
+
 	script := fmt.Sprintf("#!/bin/bash\n#SBATCH --job-name=gpu-switch-%s\n#SBATCH --nodes=1\n#SBATCH --ntasks=1\n#SBATCH --exclusive=user\n", req.ExecutionID)
 	if req.Constraint != "" {
 		script += fmt.Sprintf("#SBATCH --constraint=%s\n", req.Constraint)
@@ -94,33 +106,35 @@ func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJo
 		script += fmt.Sprintf("#SBATCH --partition=%s\n", req.Partition)
 	}
 
-	// Environment vars
 	script += fmt.Sprintf("export EXECUTION_ID=%s\n", req.ExecutionID)
 	script += fmt.Sprintf("export AMQP_URL=%s\n", c.amqpURL)
 	script += fmt.Sprintf("export SLURM_API_URL=%s\n", c.baseURL)
-	script += fmt.Sprintf("export SLURM_JWT_TOKEN=%s\n", c.jwtToken)
-	script += fmt.Sprintf("export SLURM_API_USER=%s\n", c.slurmUser)
+	script += fmt.Sprintf("export SLURM_JWT_TOKEN=%s\n", effectiveToken)
+	script += fmt.Sprintf("export SLURM_API_USER=%s\n", effectiveUser)
 
 	script += fmt.Sprintf("echo \"Running placeholder...\"\n")
-	script += fmt.Sprintf("echo \"SIF path: %s\"\n", c.placeholderSIFPath)
-	script += fmt.Sprintf("singularity run %s\n", c.placeholderSIFPath)
+	script += fmt.Sprintf("echo \"SIF path: %s\"\n", shellQuote(resolvedSIFPath))
+	script += fmt.Sprintf("singularity run %s\n", shellQuote(resolvedSIFPath))
 
 	job := map[string]any{
 		"name":                      fmt.Sprintf("gpu-switch-%s", req.ExecutionID),
 		"environment":               map[string]string{"PATH": "/bin:/usr/bin:/usr/local/bin"},
-		"current_working_directory": "/tmp",
-		"standard_output":           fmt.Sprintf("/tmp/gpu-switch-%s.out", req.ExecutionID),
-		"standard_error":            fmt.Sprintf("/tmp/gpu-switch-%s.err", req.ExecutionID),
+		"current_working_directory": homeDir,
+		"standard_output":           fmt.Sprintf("%s/gpu-switch-%s.out", homeDir, req.ExecutionID),
+		"standard_error":            fmt.Sprintf("%s/gpu-switch-%s.err", homeDir, req.ExecutionID),
 	}
 	if req.Partition != "" {
 		job["partition"] = req.Partition
+	}
+	if req.Account != "" {
+		job["account"] = req.Account
 	}
 	body := map[string]any{
 		"script": script,
 		"job":    job,
 	}
 
-	resp, err := c.doJSON(ctx, http.MethodPost, "/slurm/v0.0.40/job/submit", body)
+	resp, err := c.doRequestWithIdentity(ctx, http.MethodPost, "/slurm/v0.0.40/job/submit", marshalBody(body), "workload", effectiveUser, effectiveToken)
 	if err != nil {
 		return nil, err
 	}
@@ -140,13 +154,25 @@ func (c *RestClient) SubmitPlaceholderJob(ctx context.Context, req PlaceholderJo
 	}, nil
 }
 
+func (c *RestClient) GetNodeStateWithIdentity(ctx context.Context, nodeName string, id WorkloadIdentity) (*NodeState, error) {
+	resp, err := c.doRequestWithIdentity(ctx, http.MethodGet, fmt.Sprintf("/slurm/v0.0.40/node/%s", nodeName), nil, "workload", id.User, id.Token)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return c.parseNodeStateResponse(resp)
+}
+
 func (c *RestClient) GetNodeState(ctx context.Context, nodeName string) (*NodeState, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/slurm/v0.0.40/node/%s", nodeName), nil)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	return c.parseNodeStateResponse(resp)
+}
 
+func (c *RestClient) parseNodeStateResponse(resp *http.Response) (*NodeState, error) {
 	var result nodeInfoResponse
 	if err := c.decodeResponse(resp, &result); err != nil {
 		return nil, err
@@ -274,6 +300,30 @@ func (c *RestClient) CancelJob(ctx context.Context, jobID string) error {
 	return nil
 }
 
+func (c *RestClient) CancelJobWithIdentity(ctx context.Context, jobID string, id WorkloadIdentity) error {
+	resp, err := c.doRequestWithIdentity(ctx, http.MethodDelete, fmt.Sprintf("/slurm/v0.0.40/job/%s", jobID), nil, "workload", id.User, id.Token)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	var result slurmErrorResponse
+	if err := c.decodeResponse(resp, &result); err != nil {
+		return err
+	}
+
+	if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
+		return c.apiError(resp.StatusCode, fatalErrs)
+	}
+
+	return nil
+}
+
+func marshalBody(body any) io.Reader {
+	data, _ := json.Marshal(body)
+	return bytes.NewReader(data)
+}
+
 func (c *RestClient) doJSON(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -291,7 +341,7 @@ func (c *RestClient) doJSONAdmin(ctx context.Context, method, path string, body 
 }
 
 func (c *RestClient) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
-	return c.doRequestWithIdentity(ctx, method, path, body, "workload", c.slurmUser, c.jwtToken)
+	return c.doRequestWithIdentity(ctx, method, path, body, "admin", c.adminUser, c.adminToken)
 }
 
 func (c *RestClient) doRequestWithIdentity(ctx context.Context, method, path string, body io.Reader, identity, slurmUser, slurmToken string) (*http.Response, error) {
@@ -413,4 +463,8 @@ func filterFatalErrors(errs []slurmError) []slurmError {
 		}
 	}
 	return fatal
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

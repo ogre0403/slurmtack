@@ -25,6 +25,10 @@ func (f *capturePlaceholderSlurmClient) GetNodeState(_ context.Context, nodeName
 	return nil, nil
 }
 
+func (f *capturePlaceholderSlurmClient) GetNodeStateWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.NodeState, error) {
+	return nil, nil
+}
+
 func (f *capturePlaceholderSlurmClient) DrainNode(_ context.Context, nodeName, reason string) error {
 	return nil
 }
@@ -34,6 +38,10 @@ func (f *capturePlaceholderSlurmClient) ResumeNode(_ context.Context, nodeName s
 }
 
 func (f *capturePlaceholderSlurmClient) CancelJob(_ context.Context, jobID string) error {
+	return nil
+}
+
+func (f *capturePlaceholderSlurmClient) CancelJobWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) error {
 	return nil
 }
 
@@ -87,6 +95,41 @@ func TestOrchestratorSubmitPlaceholderLeavesPartitionEmptyWhenOmitted(t *testing
 	}
 	if fakeSlurm.submitRequests[0].Partition != "" {
 		t.Fatalf("Partition = %q, want empty string", fakeSlurm.submitRequests[0].Partition)
+	}
+}
+
+func TestOrchestratorSubmitPlaceholderUsesAccountAndWorkloadIdentity(t *testing.T) {
+	fakeSlurm := &capturePlaceholderSlurmClient{}
+	exec := &domain.Execution{
+		ID:                       "exec-account",
+		Direction:                domain.DirectionSlurmToOpenStack,
+		RequestedBy:              "operator",
+		RequestedAt:              time.Now(),
+		CurrentState:             domain.StateRequested,
+		DesiredOwner:             domain.OwnerOpenStack,
+		PreviousOwner:            domain.OwnerSlurm,
+		OverallStatus:            domain.OverallStatusActive,
+		RequestedSlurmConstraint: "gpu-a100",
+		RequestedSlurmPartition:  "gpu-maint",
+		RequestedSlurmAccount:    "proj-123",
+		SlurmWorkloadUser:        "alice",
+		SlurmWorkloadToken:       "jwt-override",
+	}
+
+	runOrchestratorPlaceholderSubmission(t, exec, fakeSlurm)
+
+	if len(fakeSlurm.submitRequests) != 1 {
+		t.Fatalf("submitRequests = %d, want 1", len(fakeSlurm.submitRequests))
+	}
+	req := fakeSlurm.submitRequests[0]
+	if req.Account != "proj-123" {
+		t.Fatalf("Account = %q, want proj-123", req.Account)
+	}
+	if req.WorkloadUser != "alice" {
+		t.Fatalf("WorkloadUser = %q, want alice", req.WorkloadUser)
+	}
+	if req.WorkloadToken != "jwt-override" {
+		t.Fatalf("WorkloadToken = %q, want jwt-override", req.WorkloadToken)
 	}
 }
 

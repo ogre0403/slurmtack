@@ -3,6 +3,16 @@
 
   var PAGE_SIZE = 10;
 
+  var SLURM_SETTINGS_KEY = 'slurmtack_slurm_settings';
+
+  function loadSlurmSettingsFromStorage() {
+    try {
+      var raw = localStorage.getItem(SLURM_SETTINGS_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (e) { /* ignore corrupt data */ }
+    return { slurm_user_token: '', slurm_account: '', placeholder_sif_file: '' };
+  }
+
   var state = {
     token: localStorage.getItem('slurmtack_token') || '',
     partitions: [],
@@ -12,7 +22,9 @@
     execPage: 0,
     execPageCursors: [null],
     execHasMore: false,
-    selectedExecutionId: null
+    selectedExecutionId: null,
+    slurmSettings: loadSlurmSettingsFromStorage(),
+    slurmDerivedUser: ''
   };
 
   function authHeaders() {
@@ -104,9 +116,10 @@
       ? 'Switch from partition ' + escapeHtml(state.selectedPartition) + ' to OpenStack'
       : 'Switch from All partitions to OpenStack';
     bar.style.display = 'flex';
+    var disabledAttr = !state.slurmDerivedUser ? ' disabled' : '';
     bar.innerHTML =
       '<span class="partition-label">' + label + '</span>' +
-      '<button onclick="switchFromPartition()">Switch to OpenStack</button>';
+      '<button' + disabledAttr + ' onclick="switchFromPartition()">Switch to OpenStack</button>';
   }
 
   function renderNodes() {
@@ -168,7 +181,8 @@
       return '<button class="danger" onclick="cancelExecution(\'' + escapeAttr(node.switch.active_execution_id) + '\')">Cancel</button>';
     }
     if (node.available_direction === 'openstack_to_slurm') {
-      return '<button onclick="switchNode(\'' + escapeAttr(node.node_name) + '\', \'openstack_to_slurm\')">Switch to Slurm</button>';
+      var disabledAttr = !state.slurmDerivedUser ? ' disabled' : '';
+      return '<button' + disabledAttr + ' onclick="switchNode(\'' + escapeAttr(node.node_name) + '\', \'openstack_to_slurm\')">Switch to Slurm</button>';
     }
     return '';
   }
@@ -289,9 +303,12 @@
 
   // Switch actions
   window.switchNode = async function (nodeName, direction) {
+    if (!state.slurmDerivedUser) {
+      alert('Cannot switch: Slurm user is not provided. Please configure Slurm settings first.');
+      return;
+    }
     if (!confirm('Switch ' + nodeName + ' (' + direction + ')?')) return;
-    var requestedBy = prompt('Requested by:', 'dashboard-operator');
-    if (!requestedBy) return;
+    var requestedBy = state.slurmDerivedUser;
 
     try {
       var body = { direction: direction, node_name: nodeName, requested_by: requestedBy };
@@ -311,13 +328,28 @@
   };
 
   window.switchFromPartition = async function () {
+    var validation = getSlurmSettingsValidation();
+    if (validation) {
+      alert('Cannot start slurm_to_openstack: ' + validation + '\nConfigure Slurm job settings first.');
+      return;
+    }
+    if (!state.slurmDerivedUser) {
+      alert('Cannot switch: Slurm user is not provided. Please configure Slurm settings first.');
+      return;
+    }
     var partitionLabel = state.selectedPartition || 'All';
     if (!confirm('Start slurm_to_openstack switch for partition: ' + partitionLabel + '?')) return;
-    var requestedBy = prompt('Requested by:', 'dashboard-operator');
-    if (!requestedBy) return;
+    var requestedBy = state.slurmDerivedUser;
 
     try {
-      var body = { direction: 'slurm_to_openstack', requested_by: requestedBy };
+      var body = {
+        direction: 'slurm_to_openstack',
+        requested_by: requestedBy,
+        slurm_account: state.slurmSettings.slurm_account,
+        placeholder_sif_file: state.slurmSettings.placeholder_sif_file,
+        slurm_user: state.slurmDerivedUser,
+        slurm_user_token: state.slurmSettings.slurm_user_token
+      };
       if (state.selectedPartition) body.slurm_partition = state.selectedPartition;
       var res = await fetch('/v1/switches', { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
       if (!res.ok) {
@@ -379,6 +411,87 @@
     }
   }
 
+  // Slurm job settings
+  function decodeSlurmUser(token) {
+    if (!token) return '';
+    var parts = token.split('.');
+    if (parts.length < 2) return '';
+    try {
+      var payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      return payload.sun || payload.username || payload.preferred_username || payload.sub || '';
+    } catch (e) { return ''; }
+  }
+
+  function getSlurmSettingsValidation() {
+    var s = state.slurmSettings;
+    if (!s.slurm_user_token) return 'Slurm user token is required.';
+    if (!state.slurmDerivedUser) return 'Cannot derive workload user from token.';
+    if (!s.slurm_account) return 'Slurm account is required.';
+    if (!s.placeholder_sif_file) return 'Placeholder SIF filename is required.';
+    return '';
+  }
+
+  function isSlurmSettingsComplete() {
+    return getSlurmSettingsValidation() === '';
+  }
+
+  function updateSlurmSettingsUI() {
+    state.slurmDerivedUser = decodeSlurmUser(state.slurmSettings.slurm_user_token);
+    var userEl = document.getElementById('slurm-derived-user');
+    if (userEl) userEl.textContent = state.slurmDerivedUser || '—';
+    var validationEl = document.getElementById('slurm-settings-validation');
+    if (validationEl) validationEl.textContent = getSlurmSettingsValidation();
+    var btn = document.getElementById('slurm-settings-btn');
+    if (btn) {
+      if (isSlurmSettingsComplete()) {
+        btn.classList.remove('incomplete');
+      } else {
+        btn.classList.add('incomplete');
+      }
+    }
+    if (typeof renderNodes === 'function') {
+      renderNodes();
+    }
+  }
+
+  window.toggleSlurmSettings = function () {
+    var panel = document.getElementById('slurm-settings-panel');
+    panel.classList.toggle('open');
+    if (panel.classList.contains('open')) {
+      document.getElementById('slurm-token-input').value = state.slurmSettings.slurm_user_token;
+      document.getElementById('slurm-account-input').value = state.slurmSettings.slurm_account;
+      document.getElementById('slurm-sif-input').value = state.slurmSettings.placeholder_sif_file;
+      updateSlurmSettingsUI();
+    }
+  };
+
+  window.onSlurmTokenInput = function () {
+    state.slurmSettings.slurm_user_token = document.getElementById('slurm-token-input').value.trim();
+    updateSlurmSettingsUI();
+  };
+
+  window.saveSlurmSettings = function () {
+    state.slurmSettings.slurm_user_token = document.getElementById('slurm-token-input').value.trim();
+    state.slurmSettings.slurm_account = document.getElementById('slurm-account-input').value.trim();
+    state.slurmSettings.placeholder_sif_file = document.getElementById('slurm-sif-input').value.trim();
+    state.slurmDerivedUser = decodeSlurmUser(state.slurmSettings.slurm_user_token);
+    localStorage.setItem(SLURM_SETTINGS_KEY, JSON.stringify(state.slurmSettings));
+    updateSlurmSettingsUI();
+    if (isSlurmSettingsComplete()) {
+      document.getElementById('slurm-settings-panel').classList.remove('open');
+    }
+  };
+
+  window.clearSlurmSettings = function () {
+    state.slurmSettings = { slurm_user_token: '', slurm_account: '', placeholder_sif_file: '' };
+    state.slurmDerivedUser = '';
+    localStorage.removeItem(SLURM_SETTINGS_KEY);
+    document.getElementById('slurm-token-input').value = '';
+    document.getElementById('slurm-account-input').value = '';
+    document.getElementById('slurm-sif-input').value = '';
+    updateSlurmSettingsUI();
+  };
+
   // Filter events - reset pagination when filters change
   document.getElementById('history-node-filter').onchange = function () {
     state.execPage = 0;
@@ -393,6 +506,7 @@
 
   // Init
   ensureToken();
+  updateSlurmSettingsUI();
   checkHealth();
   loadInventory(null);
   loadExecutions(0);

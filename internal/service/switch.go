@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/slurmtack/slurmtack/internal/config"
 	"github.com/slurmtack/slurmtack/internal/domain"
 	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
@@ -16,11 +17,15 @@ import (
 )
 
 type SwitchRequest struct {
-	NodeName        string
-	Direction       domain.SwitchDirection
-	RequestedBy     string
-	SlurmConstraint string
-	SlurmPartition  string
+	NodeName           string
+	Direction          domain.SwitchDirection
+	RequestedBy        string
+	SlurmConstraint    string
+	SlurmPartition     string
+	SlurmAccount       string
+	SlurmUser          string
+	SlurmUserToken     string
+	PlaceholderSIFFile string
 }
 
 var ErrInvalidSwitchRequest = errors.New("invalid switch request")
@@ -42,12 +47,24 @@ type ExecutionIntake interface {
 	AdmitExecution(ctx context.Context, executionID string)
 }
 
+type SlurmWorkloadDefaults struct {
+	User  string
+	Token string
+}
+
+type PlaceholderSIFDefaults struct {
+	Path string
+	File string
+}
+
 type SwitchService struct {
-	store                store.Store
-	publisher            EventPublisher
-	intake               ExecutionIntake
-	logger               *slog.Logger
-	slurmNodeStateReader SlurmNodeStateReader
+	store                   store.Store
+	publisher               EventPublisher
+	intake                  ExecutionIntake
+	logger                  *slog.Logger
+	slurmNodeStateReader    SlurmNodeStateReader
+	slurmWorkloadDefaults   *SlurmWorkloadDefaults
+	placeholderSIFDefaults  *PlaceholderSIFDefaults
 }
 
 func NewSwitchService(s store.Store, logger *slog.Logger, publishers ...EventPublisher) *SwitchService {
@@ -60,6 +77,20 @@ func NewSwitchService(s store.Store, logger *slog.Logger, publishers ...EventPub
 
 func (s *SwitchService) WithExecutionIntake(intake ExecutionIntake) *SwitchService {
 	s.intake = intake
+	return s
+}
+
+func (s *SwitchService) WithSlurmWorkloadDefaults(user, token string) *SwitchService {
+	if user != "" || token != "" {
+		s.slurmWorkloadDefaults = &SlurmWorkloadDefaults{User: user, Token: token}
+	}
+	return s
+}
+
+func (s *SwitchService) WithPlaceholderSIFDefaults(path, file string) *SwitchService {
+	if path != "" || file != "" {
+		s.placeholderSIFDefaults = &PlaceholderSIFDefaults{Path: path, File: file}
+	}
 	return s
 }
 
@@ -90,6 +121,41 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 		return "", fmt.Errorf("%w: invalid direction: %s", ErrInvalidSwitchRequest, req.Direction)
 	}
 
+	// Validate pairwise override and resolve effective workload identity for slurm_to_openstack.
+	var resolvedSlurmUser, resolvedSlurmToken string
+	if req.Direction == domain.DirectionSlurmToOpenStack {
+		if (req.SlurmUser != "") != (req.SlurmUserToken != "") {
+			return "", fmt.Errorf("%w: slurm_user and slurm_user_token must be provided together", ErrInvalidSwitchRequest)
+		}
+		if req.SlurmUser != "" && req.SlurmUserToken != "" {
+			resolvedSlurmUser = req.SlurmUser
+			resolvedSlurmToken = req.SlurmUserToken
+		} else if s.slurmWorkloadDefaults != nil && s.slurmWorkloadDefaults.Token != "" {
+			resolvedSlurmUser = s.slurmWorkloadDefaults.User
+			resolvedSlurmToken = s.slurmWorkloadDefaults.Token
+		} else {
+			return "", fmt.Errorf("%w: slurm workload user and token are required (provide slurm_user/slurm_user_token or configure daemon defaults)", ErrInvalidSwitchRequest)
+		}
+	}
+
+	// Resolve effective placeholder SIF filename for slurm_to_openstack.
+	var resolvedPlaceholderSIFFile string
+	if req.Direction == domain.DirectionSlurmToOpenStack {
+		if s.placeholderSIFDefaults == nil || s.placeholderSIFDefaults.Path == "" {
+			return "", fmt.Errorf("%w: placeholder SIF path configuration is invalid or missing", ErrInvalidSwitchRequest)
+		}
+		if req.PlaceholderSIFFile != "" {
+			if !config.IsValidPlaceholderSIFFile(req.PlaceholderSIFFile) {
+				return "", fmt.Errorf("%w: placeholder_sif_file must be a simple filename", ErrInvalidSwitchRequest)
+			}
+			resolvedPlaceholderSIFFile = req.PlaceholderSIFFile
+		} else if s.placeholderSIFDefaults.File != "" {
+			resolvedPlaceholderSIFFile = s.placeholderSIFDefaults.File
+		} else {
+			return "", fmt.Errorf("%w: placeholder SIF filename is required (provide placeholder_sif_file or configure PLACEHOLDER_SIF_FILE)", ErrInvalidSwitchRequest)
+		}
+	}
+
 	if req.Direction == domain.DirectionOpenStackToSlurm {
 		if err := s.ensureOpenStackToSlurmRequestAllowed(ctx, req.NodeName); err != nil {
 			return "", err
@@ -115,6 +181,10 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 		OverallStatus:            domain.OverallStatusActive,
 		RequestedSlurmConstraint: req.SlurmConstraint,
 		RequestedSlurmPartition:  req.SlurmPartition,
+		RequestedSlurmAccount:    req.SlurmAccount,
+		SlurmWorkloadUser:        resolvedSlurmUser,
+		SlurmWorkloadToken:       resolvedSlurmToken,
+		PlaceholderSIFFile:       resolvedPlaceholderSIFFile,
 	}
 
 	if err := s.store.CreateExecution(ctx, exec); err != nil {

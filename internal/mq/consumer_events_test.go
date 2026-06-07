@@ -31,6 +31,10 @@ func (f *fakeAdmissionSlurmClient) GetNodeState(_ context.Context, nodeName stri
 	return nil, nil
 }
 
+func (f *fakeAdmissionSlurmClient) GetNodeStateWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.NodeState, error) {
+	return nil, nil
+}
+
 func (f *fakeAdmissionSlurmClient) DrainNode(_ context.Context, nodeName, reason string) error {
 	return nil
 }
@@ -40,6 +44,10 @@ func (f *fakeAdmissionSlurmClient) ResumeNode(_ context.Context, nodeName string
 }
 
 func (f *fakeAdmissionSlurmClient) CancelJob(_ context.Context, jobID string) error {
+	return nil
+}
+
+func (f *fakeAdmissionSlurmClient) CancelJobWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) error {
 	return nil
 }
 

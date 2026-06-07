@@ -17,7 +17,7 @@ cd build
 sudo bash ./build-placeholder-agent.sh
 ```
 
-接著把 SIF 複製到所有 GPU 節點都看得到的 shared path，且`PLACEHOLDER_SIF_PATH` 要設成這個shared path.
+接著把 SIF 複製到每個 workload user 的 home 目錄下相同的相對路徑，例如 `/home/alice/slurmtack/build/output/placeholder-agent.sif`。設定 `PLACEHOLDER_SIF_PATH` 為該 home-relative 目錄（如 `slurmtack/build/output`），`PLACEHOLDER_SIF_FILE` 為預設檔名（如 `placeholder-agent.sif`）。每次 request 可透過 `placeholder_sif_file` 欄位覆蓋檔名。
 
 
 ### Available Environment Variables
@@ -34,11 +34,12 @@ sudo bash ./build-placeholder-agent.sh
 
 3. SLurm 相關：
 - `SLURM_API_URL`
-- `SLURM_JWT_TOKEN`: 工作負載 JWT（job submit / cancel / node read）
+- `SLURM_JWT_TOKEN`: 工作負載 JWT（job submit / cancel / node read）。不再是啟動必要條件；若未設定，每個 `slurm_to_openstack` request 必須自帶 `slurm_user` + `slurm_user_token`。
 - `SLURM_API_USER`: 送出 job 的 Slurm 使用者（預設 `cloud-user`）
 - `SLURM_ADMIN_USER`: drain/resume 操作使用的管理員帳號（預設同 `SLURM_API_USER`）
 - `SLURM_ADMIN_JWT_TOKEN`: 管理員操作使用的 JWT（預設同 `SLURM_JWT_TOKEN`）
-- `PLACEHOLDER_SIF_PATH`: 是Slurm Cluster的shared Storage Path，Singularity會使用的SIF檔路徑。 
+- `PLACEHOLDER_SIF_PATH`: Home-relative 目錄路徑（不能是絕對路徑或含 `..`）。Runtime 解析為 `/home/<workload-user>/<PLACEHOLDER_SIF_PATH>/<effective-file>`。
+- `PLACEHOLDER_SIF_FILE`: 預設 SIF 檔名。若 request 未提供 `placeholder_sif_file` 則使用此值。
 
 4. OpenStack 相關：
 - `OS_AUTH_URL`
@@ -63,8 +64,27 @@ sudo bash ./build-placeholder-agent.sh
 
 這種方向在 request 建立時通常還不知道實際會切哪一台節點，**`node_name` 不是 `slurm_to_openstack` 的有效 request 欄位。** 若 request body 中包含 `node_name`，API 會回傳 `HTTP 400`。`slurm_to_openstack` execution 的節點身分由 placeholder agent 的 `execution.allocation` 事件決定，而非由呼叫端指定。
 
-要指定Partition的話，在BODY裡加上`"slurm_partition": "<PARTITION>"`，`slurm_partition` 是可選欄位；若省略，daemon 會維持目前行為，讓 Slurm 使用預設 partition 選擇。
+可選欄位：
 
+| 欄位 | 說明 |
+|------|------|
+| `slurm_partition` | 指定 Slurm partition（省略則使用預設） |
+| `slurm_constraint` | 指定 Slurm constraint |
+| `slurm_account` | 指定 Slurm account，placeholder job 的 `job.account` 會使用此值 |
+| `slurm_user` | Request-scoped 工作負載 Slurm 使用者（必須與 `slurm_user_token` 一起提供） |
+| `slurm_user_token` | Request-scoped 工作負載 JWT（必須與 `slurm_user` 一起提供） |
+
+**Workload Identity 解析規則：**
+1. 若 request 同時提供 `slurm_user` 和 `slurm_user_token`，則使用 request 提供的身分。
+2. 否則使用 daemon 設定的 `SLURM_API_USER` / `SLURM_JWT_TOKEN`。
+3. 若兩者都沒有，request 會回傳 HTTP 400。
+
+**Placeholder Job 行為：**
+- `current_working_directory`、`standard_output`、`standard_error` 使用 `/home/<effective-user>/`。
+- 若有指定 `slurm_account`，placeholder job 的 `job.account` 會設為該值。
+- Placeholder script 會 export 使用的 `SLURM_API_USER` 和 `SLURM_JWT_TOKEN`。
+
+基本範例（使用 daemon 預設身分）：
 
 ```shell
 EXEC_ID=$(
@@ -81,6 +101,29 @@ curl -X POST http://localhost/v1/switches \
 curl -s -H 'Authorization: Bearer changeme' \
   "http://localhost/v1/switches/$EXEC_ID" | jq .
 ```
+
+使用 request-scoped credentials 和 account：
+
+```shell
+EXEC_ID=$(
+curl -X POST http://localhost/v1/switches \
+  -H "Authorization: Bearer changeme" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "direction": "slurm_to_openstack",
+    "requested_by": "opencode",
+    "slurm_partition": "gpu-maint",
+    "slurm_account": "proj-123",
+    "slurm_user": "alice",
+    "slurm_user_token": "'"$JWT_TOKEN"'"
+  }' | jq -r '.execution_id'
+)
+
+curl -s -H 'Authorization: Bearer changeme' \
+  "http://localhost/v1/switches/$EXEC_ID" | jq .
+```
+
+GET response 會包含 `requested_slurm_account`（不會暴露 workload credentials）。
 
 
 ### Create a Switch from OpenStack to Slurm
