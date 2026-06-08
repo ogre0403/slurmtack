@@ -1,0 +1,541 @@
+basePath: /
+definitions:
+  internal_api.DashboardSettingsResponse:
+    properties:
+      slurm_sif_path:
+        type: string
+      slurm_sif_path_configured:
+        type: boolean
+    type: object
+  internal_api.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  internal_api.ExecutionDetail:
+    properties:
+      allocation_event_at:
+        type: string
+      cancellation_source_state:
+        type: string
+      current_state:
+        type: string
+      desired_owner:
+        type: string
+      direction:
+        type: string
+      error_code:
+        type: string
+      error_summary:
+        type: string
+      id:
+        type: string
+      lock_acquired_at:
+        type: string
+      lock_released_at:
+        type: string
+      node_name:
+        type: string
+      overall_status:
+        type: string
+      placeholder_job_id:
+        type: string
+      previous_owner:
+        type: string
+      requested_at:
+        type: string
+      requested_by:
+        type: string
+      requested_slurm_account:
+        type: string
+      requested_slurm_constraint:
+        type: string
+      requested_slurm_partition:
+        type: string
+      state_version:
+        type: integer
+    type: object
+  internal_api.ExecutionStatus:
+    properties:
+      current_state:
+        type: string
+      direction:
+        type: string
+      error_code:
+        type: string
+      error_summary:
+        type: string
+      id:
+        type: string
+      node_name:
+        type: string
+      overall_status:
+        type: string
+      requested_at:
+        type: string
+      requested_by:
+        type: string
+    type: object
+  internal_api.HealthResponse:
+    properties:
+      error:
+        type: string
+      status:
+        type: string
+    type: object
+  internal_api.InventoryComputeService:
+    properties:
+      enabled:
+        type: boolean
+      state:
+        type: string
+      status:
+        type: string
+    type: object
+  internal_api.InventoryLastExecution:
+    properties:
+      direction:
+        type: string
+      id:
+        type: string
+      overall_status:
+        type: string
+      requested_at:
+        type: string
+    type: object
+  internal_api.InventoryNode:
+    properties:
+      available_direction:
+        type: string
+      last_execution:
+        $ref: '#/definitions/internal_api.InventoryLastExecution'
+      node_name:
+        type: string
+      openstack:
+        $ref: '#/definitions/internal_api.InventoryNodeOpenStack'
+      owner:
+        type: string
+      owner_source:
+        type: string
+      partitions:
+        items:
+          type: string
+        type: array
+      slurm:
+        $ref: '#/definitions/internal_api.InventoryNodeSlurm'
+      switch:
+        $ref: '#/definitions/internal_api.InventoryNodeSwitch'
+    type: object
+  internal_api.InventoryNodeOpenStack:
+    properties:
+      active_migration_count:
+        type: integer
+      compute_service:
+        $ref: '#/definitions/internal_api.InventoryComputeService'
+      instance_count:
+        type: integer
+    type: object
+  internal_api.InventoryNodeSlurm:
+    properties:
+      gres:
+        items:
+          type: string
+        type: array
+      running_jobs:
+        items:
+          type: string
+        type: array
+      state:
+        type: string
+    type: object
+  internal_api.InventoryNodeSwitch:
+    properties:
+      active_execution_id:
+        type: string
+      active_state:
+        type: string
+    type: object
+  internal_api.InventoryPartition:
+    properties:
+      name:
+        type: string
+      nodes:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_api.InventoryResponse:
+    properties:
+      generated_at:
+        type: string
+      nodes:
+        items:
+          $ref: '#/definitions/internal_api.InventoryNode'
+        type: array
+      partitions:
+        items:
+          $ref: '#/definitions/internal_api.InventoryPartition'
+        type: array
+    type: object
+  internal_api.LoginRequest:
+    properties:
+      slurm_user:
+        type: string
+      slurm_user_token:
+        type: string
+    required:
+    - slurm_user
+    - slurm_user_token
+    type: object
+  internal_api.LoginResponse:
+    properties:
+      slurmtack_token:
+        type: string
+    type: object
+  internal_api.StepResponse:
+    properties:
+      command_id:
+        type: string
+      ended_at:
+        type: string
+      error_class:
+        type: string
+      exit_code:
+        type: integer
+      host:
+        type: string
+      retry_count:
+        type: integer
+      sequence:
+        type: integer
+      snapshot_after_path:
+        type: string
+      snapshot_before_path:
+        type: string
+      started_at:
+        type: string
+      status:
+        type: string
+      stderr_path:
+        type: string
+      stdout_path:
+        type: string
+      step_name:
+        type: string
+    type: object
+  internal_api.SwitchRequest:
+    properties:
+      direction:
+        type: string
+      node_name:
+        type: string
+      placeholder_sif_file:
+        type: string
+      requested_by:
+        type: string
+      slurm_account:
+        type: string
+      slurm_constraint:
+        type: string
+      slurm_partition:
+        type: string
+      slurm_user:
+        type: string
+      slurm_user_token:
+        type: string
+    required:
+    - direction
+    - requested_by
+    type: object
+  internal_api.SwitchResponse:
+    properties:
+      execution_id:
+        type: string
+      status_url:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Slurmtack orchestrates node ownership switches between Slurm and OpenStack.
+  title: Slurmtack API
+  version: "1.0"
+paths:
+  /health:
+    get:
+      description: Returns 200 if the service is healthy (database reachable), 503
+        otherwise.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.HealthResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/internal_api.HealthResponse'
+      summary: Health check
+      tags:
+      - health
+  /v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Validates the Slurm user token against the Slurm API and returns
+        a Slurmtack JWT for subsequent requests.
+      parameters:
+      - description: Slurm credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+      summary: Authenticate with Slurm credentials
+      tags:
+      - auth
+  /v1/dashboard/inventory:
+    get:
+      description: Returns the current inventory of Slurm partitions and nodes, enriched
+        with OpenStack compute service state and active switch execution status. Only
+        available when both Slurm and OpenStack clients are configured.
+      parameters:
+      - description: Filter results to a single Slurm partition by name
+        in: query
+        name: partition
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.InventoryResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get node inventory
+      tags:
+      - dashboard
+  /v1/dashboard/settings:
+    get:
+      description: Returns configuration values used by the Slurmtack dashboard, such
+        as whether a Slurm SIF path is configured.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.DashboardSettingsResponse'
+      security:
+      - BearerAuth: []
+      summary: Get dashboard settings
+      tags:
+      - dashboard
+  /v1/switches:
+    get:
+      description: Returns executions ordered by most-recent-first. Supports filtering
+        by node name, status, direction, and a before-timestamp cursor.
+      parameters:
+      - description: Filter by node name
+        in: query
+        name: node
+        type: string
+      - description: Filter by overall_status (active, completed, failed, cancelled)
+        in: query
+        name: status
+        type: string
+      - description: Filter by direction (slurm_to_openstack, openstack_to_slurm)
+        in: query
+        name: direction
+        type: string
+      - description: 'Maximum number of results (default: all)'
+        in: query
+        name: limit
+        type: integer
+      - description: Return only executions requested before this RFC3339 timestamp
+        in: query
+        name: before
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api.ExecutionStatus'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List switch executions
+      tags:
+      - switches
+    post:
+      consumes:
+      - application/json
+      description: Submits a request to switch a node between Slurm and OpenStack
+        ownership. Returns immediately with an execution ID; poll the status URL for
+        progress.
+      parameters:
+      - description: Switch parameters
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.SwitchRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/internal_api.SwitchResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Request a node ownership switch
+      tags:
+      - switches
+  /v1/switches/{id}:
+    get:
+      description: Returns all fields of a switch execution, including state, timing,
+        Slurm job details, and cancellation info.
+      parameters:
+      - description: Execution ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.ExecutionDetail'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get switch execution detail
+      tags:
+      - switches
+  /v1/switches/{id}/cancel:
+    post:
+      description: Requests cancellation of an active switch. Returns 202 if the cancellation
+        request was accepted, 409 if the execution is not in a cancellable state.
+      parameters:
+      - description: Execution ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/internal_api.SwitchResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Cancel a switch execution
+      tags:
+      - switches
+  /v1/switches/{id}/steps:
+    get:
+      description: Returns all steps recorded for the given execution, ordered by
+        sequence number.
+      parameters:
+      - description: Execution ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api.StepResponse'
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List steps for a switch execution
+      tags:
+      - switches
+securityDefinitions:
+  BearerAuth:
+    description: JWT bearer token. Obtain via POST /v1/auth/login.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

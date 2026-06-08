@@ -22,6 +22,18 @@ func NewSwitchHandler(svc *service.SwitchService, s store.Store) *SwitchHandler 
 	return &SwitchHandler{svc: svc, store: s}
 }
 
+// Create initiates a node ownership switch.
+// @Summary     Request a node ownership switch
+// @Description Submits a request to switch a node between Slurm and OpenStack ownership. Returns immediately with an execution ID; poll the status URL for progress.
+// @Tags        switches
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body     SwitchRequest  true "Switch parameters"
+// @Success     202  {object} SwitchResponse
+// @Failure     400  {object} ErrorResponse
+// @Failure     500  {object} ErrorResponse
+// @Router      /v1/switches [post]
 func (h *SwitchHandler) Create(c *gin.Context) {
 	var req SwitchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -62,6 +74,17 @@ func (h *SwitchHandler) Create(c *gin.Context) {
 	})
 }
 
+// Get returns the full detail of a switch execution.
+// @Summary     Get switch execution detail
+// @Description Returns all fields of a switch execution, including state, timing, Slurm job details, and cancellation info.
+// @Tags        switches
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path     string true "Execution ID"
+// @Success     200 {object} ExecutionDetail
+// @Failure     404 {object} ErrorResponse
+// @Failure     500 {object} ErrorResponse
+// @Router      /v1/switches/{id} [get]
 func (h *SwitchHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	exec, err := h.store.GetExecution(c.Request.Context(), id)
@@ -99,6 +122,21 @@ func (h *SwitchHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
+// List returns a paginated list of switch executions.
+// @Summary     List switch executions
+// @Description Returns executions ordered by most-recent-first. Supports filtering by node name, status, direction, and a before-timestamp cursor.
+// @Tags        switches
+// @Produce     json
+// @Security    BearerAuth
+// @Param       node      query    string false "Filter by node name"
+// @Param       status    query    string false "Filter by overall_status (active, completed, failed, cancelled)"
+// @Param       direction query    string false "Filter by direction (slurm_to_openstack, openstack_to_slurm)"
+// @Param       limit     query    int    false "Maximum number of results (default: all)"
+// @Param       before    query    string false "Return only executions requested before this RFC3339 timestamp"
+// @Success     200 {array}  ExecutionStatus
+// @Failure     400 {object} ErrorResponse
+// @Failure     500 {object} ErrorResponse
+// @Router      /v1/switches [get]
 func (h *SwitchHandler) List(c *gin.Context) {
 	nodeFilter := c.Query("node")
 	statusFilter := c.Query("status")
@@ -169,6 +207,17 @@ func (h *SwitchHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, results)
 }
 
+// Steps returns the individual execution steps for a switch.
+// @Summary     List steps for a switch execution
+// @Description Returns all steps recorded for the given execution, ordered by sequence number.
+// @Tags        switches
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path     string true "Execution ID"
+// @Success     200 {array}  StepResponse
+// @Failure     404 {object} ErrorResponse
+// @Failure     500 {object} ErrorResponse
+// @Router      /v1/switches/{id}/steps [get]
 func (h *SwitchHandler) Steps(c *gin.Context) {
 	id := c.Param("id")
 
@@ -210,6 +259,18 @@ func (h *SwitchHandler) Steps(c *gin.Context) {
 	c.JSON(http.StatusOK, results)
 }
 
+// Cancel requests cancellation of an in-progress switch.
+// @Summary     Cancel a switch execution
+// @Description Requests cancellation of an active switch. Returns 202 if the cancellation request was accepted, 409 if the execution is not in a cancellable state.
+// @Tags        switches
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path     string true "Execution ID"
+// @Success     202 {object} SwitchResponse
+// @Failure     404 {object} ErrorResponse
+// @Failure     409 {object} ErrorResponse
+// @Failure     500 {object} ErrorResponse
+// @Router      /v1/switches/{id}/cancel [post]
 func (h *SwitchHandler) Cancel(c *gin.Context) {
 	id := c.Param("id")
 	err := h.svc.CancelSwitch(c.Request.Context(), id)

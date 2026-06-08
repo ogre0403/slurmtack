@@ -1,3 +1,12 @@
+// @title           Slurmtack API
+// @version         1.0
+// @description     Slurmtack orchestrates node ownership switches between Slurm and OpenStack.
+// @host            localhost:8080
+// @BasePath        /
+// @securityDefinitions.apikey BearerAuth
+// @in              header
+// @name            Authorization
+// @description     JWT bearer token. Obtain via POST /v1/auth/login.
 package main
 
 import (

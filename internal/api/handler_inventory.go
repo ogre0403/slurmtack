@@ -30,6 +30,16 @@ func NewInventoryHandler(sc slurm.Client, oc openstack.Client, s store.Store) *I
 	return &InventoryHandler{slurmClient: sc, osClient: oc, store: s}
 }
 
+// Get returns the current node inventory.
+// @Summary     Get node inventory
+// @Description Returns the current inventory of Slurm partitions and nodes, enriched with OpenStack compute service state and active switch execution status. Only available when both Slurm and OpenStack clients are configured.
+// @Tags        dashboard
+// @Produce     json
+// @Security    BearerAuth
+// @Param       partition query    string false "Filter results to a single Slurm partition by name"
+// @Success     200 {object} InventoryResponse
+// @Failure     500 {object} ErrorResponse
+// @Router      /v1/dashboard/inventory [get]
 func (h *InventoryHandler) Get(c *gin.Context) {
 	ctx := c.Request.Context()
 	partitionFilter := c.Query("partition")

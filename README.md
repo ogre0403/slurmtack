@@ -62,6 +62,14 @@ sudo bash ./build-placeholder-agent.sh
 
 ## API Reference
 
+A machine-readable OpenAPI 2.0 spec is generated from code annotations. To regenerate after changing handlers:
+
+```bash
+make swagger
+```
+
+Output is committed to `docs/swagger/swagger.json` and `docs/swagger/swagger.yaml`.
+
 ### Create a switch from Slurm to OpenStack
 
 這種方向在 request 建立時通常還不知道實際會切哪一台節點，**`node_name` 不是 `slurm_to_openstack` 的有效 request 欄位。** 若 request body 中包含 `node_name`，API 會回傳 `HTTP 400`。`slurm_to_openstack` execution 的節點身分由 placeholder agent 的 `execution.allocation` 事件決定，而非由呼叫端指定。

@@ -16,7 +16,8 @@
 				"golang.Go",
 				"openai.chatgpt",
 				"onnovalkering.vscode-singularity",
-				"sst-dev.opencode"
+				"sst-dev.opencode",
+				"Arjun.swagger-viewer",
 			],
 			"settings": {
 				"terminal.integrated.defaultProfile.linux": "zsh",

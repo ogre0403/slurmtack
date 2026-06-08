@@ -1,0 +1,822 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Slurmtack orchestrates node ownership switches between Slurm and OpenStack.",
+        "title": "Slurmtack API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/",
+    "paths": {
+        "/health": {
+            "get": {
+                "description": "Returns 200 if the service is healthy (database reachable), 503 otherwise.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.HealthResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.HealthResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/auth/login": {
+            "post": {
+                "description": "Validates the Slurm user token against the Slurm API and returns a Slurmtack JWT for subsequent requests.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Authenticate with Slurm credentials",
+                "parameters": [
+                    {
+                        "description": "Slurm credentials",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.LoginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.LoginResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/dashboard/inventory": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the current inventory of Slurm partitions and nodes, enriched with OpenStack compute service state and active switch execution status. Only available when both Slurm and OpenStack clients are configured.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Get node inventory",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter results to a single Slurm partition by name",
+                        "name": "partition",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.InventoryResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/dashboard/settings": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns configuration values used by the Slurmtack dashboard, such as whether a Slurm SIF path is configured.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Get dashboard settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.DashboardSettingsResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/switches": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns executions ordered by most-recent-first. Supports filtering by node name, status, direction, and a before-timestamp cursor.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "switches"
+                ],
+                "summary": "List switch executions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by node name",
+                        "name": "node",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by overall_status (active, completed, failed, cancelled)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by direction (slurm_to_openstack, openstack_to_slurm)",
+                        "name": "direction",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results (default: all)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Return only executions requested before this RFC3339 timestamp",
+                        "name": "before",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.ExecutionStatus"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Submits a request to switch a node between Slurm and OpenStack ownership. Returns immediately with an execution ID; poll the status URL for progress.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "switches"
+                ],
+                "summary": "Request a node ownership switch",
+                "parameters": [
+                    {
+                        "description": "Switch parameters",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.SwitchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.SwitchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/switches/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns all fields of a switch execution, including state, timing, Slurm job details, and cancellation info.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "switches"
+                ],
+                "summary": "Get switch execution detail",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Execution ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ExecutionDetail"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/switches/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requests cancellation of an active switch. Returns 202 if the cancellation request was accepted, 409 if the execution is not in a cancellable state.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "switches"
+                ],
+                "summary": "Cancel a switch execution",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Execution ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.SwitchResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/switches/{id}/steps": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns all steps recorded for the given execution, ordered by sequence number.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "switches"
+                ],
+                "summary": "List steps for a switch execution",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Execution ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.StepResponse"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "internal_api.DashboardSettingsResponse": {
+            "type": "object",
+            "properties": {
+                "slurm_sif_path": {
+                    "type": "string"
+                },
+                "slurm_sif_path_configured": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.ExecutionDetail": {
+            "type": "object",
+            "properties": {
+                "allocation_event_at": {
+                    "type": "string"
+                },
+                "cancellation_source_state": {
+                    "type": "string"
+                },
+                "current_state": {
+                    "type": "string"
+                },
+                "desired_owner": {
+                    "type": "string"
+                },
+                "direction": {
+                    "type": "string"
+                },
+                "error_code": {
+                    "type": "string"
+                },
+                "error_summary": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lock_acquired_at": {
+                    "type": "string"
+                },
+                "lock_released_at": {
+                    "type": "string"
+                },
+                "node_name": {
+                    "type": "string"
+                },
+                "overall_status": {
+                    "type": "string"
+                },
+                "placeholder_job_id": {
+                    "type": "string"
+                },
+                "previous_owner": {
+                    "type": "string"
+                },
+                "requested_at": {
+                    "type": "string"
+                },
+                "requested_by": {
+                    "type": "string"
+                },
+                "requested_slurm_account": {
+                    "type": "string"
+                },
+                "requested_slurm_constraint": {
+                    "type": "string"
+                },
+                "requested_slurm_partition": {
+                    "type": "string"
+                },
+                "state_version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_api.ExecutionStatus": {
+            "type": "object",
+            "properties": {
+                "current_state": {
+                    "type": "string"
+                },
+                "direction": {
+                    "type": "string"
+                },
+                "error_code": {
+                    "type": "string"
+                },
+                "error_summary": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "node_name": {
+                    "type": "string"
+                },
+                "overall_status": {
+                    "type": "string"
+                },
+                "requested_at": {
+                    "type": "string"
+                },
+                "requested_by": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.HealthResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.InventoryComputeService": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.InventoryLastExecution": {
+            "type": "object",
+            "properties": {
+                "direction": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "overall_status": {
+                    "type": "string"
+                },
+                "requested_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.InventoryNode": {
+            "type": "object",
+            "properties": {
+                "available_direction": {
+                    "type": "string"
+                },
+                "last_execution": {
+                    "$ref": "#/definitions/internal_api.InventoryLastExecution"
+                },
+                "node_name": {
+                    "type": "string"
+                },
+                "openstack": {
+                    "$ref": "#/definitions/internal_api.InventoryNodeOpenStack"
+                },
+                "owner": {
+                    "type": "string"
+                },
+                "owner_source": {
+                    "type": "string"
+                },
+                "partitions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "slurm": {
+                    "$ref": "#/definitions/internal_api.InventoryNodeSlurm"
+                },
+                "switch": {
+                    "$ref": "#/definitions/internal_api.InventoryNodeSwitch"
+                }
+            }
+        },
+        "internal_api.InventoryNodeOpenStack": {
+            "type": "object",
+            "properties": {
+                "active_migration_count": {
+                    "type": "integer"
+                },
+                "compute_service": {
+                    "$ref": "#/definitions/internal_api.InventoryComputeService"
+                },
+                "instance_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_api.InventoryNodeSlurm": {
+            "type": "object",
+            "properties": {
+                "gres": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "running_jobs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "state": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.InventoryNodeSwitch": {
+            "type": "object",
+            "properties": {
+                "active_execution_id": {
+                    "type": "string"
+                },
+                "active_state": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.InventoryPartition": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_api.InventoryResponse": {
+            "type": "object",
+            "properties": {
+                "generated_at": {
+                    "type": "string"
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.InventoryNode"
+                    }
+                },
+                "partitions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.InventoryPartition"
+                    }
+                }
+            }
+        },
+        "internal_api.LoginRequest": {
+            "type": "object",
+            "required": [
+                "slurm_user",
+                "slurm_user_token"
+            ],
+            "properties": {
+                "slurm_user": {
+                    "type": "string"
+                },
+                "slurm_user_token": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.LoginResponse": {
+            "type": "object",
+            "properties": {
+                "slurmtack_token": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.StepResponse": {
+            "type": "object",
+            "properties": {
+                "command_id": {
+                    "type": "string"
+                },
+                "ended_at": {
+                    "type": "string"
+                },
+                "error_class": {
+                    "type": "string"
+                },
+                "exit_code": {
+                    "type": "integer"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "retry_count": {
+                    "type": "integer"
+                },
+                "sequence": {
+                    "type": "integer"
+                },
+                "snapshot_after_path": {
+                    "type": "string"
+                },
+                "snapshot_before_path": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "stderr_path": {
+                    "type": "string"
+                },
+                "stdout_path": {
+                    "type": "string"
+                },
+                "step_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.SwitchRequest": {
+            "type": "object",
+            "required": [
+                "direction",
+                "requested_by"
+            ],
+            "properties": {
+                "direction": {
+                    "type": "string"
+                },
+                "node_name": {
+                    "type": "string"
+                },
+                "placeholder_sif_file": {
+                    "type": "string"
+                },
+                "requested_by": {
+                    "type": "string"
+                },
+                "slurm_account": {
+                    "type": "string"
+                },
+                "slurm_constraint": {
+                    "type": "string"
+                },
+                "slurm_partition": {
+                    "type": "string"
+                },
+                "slurm_user": {
+                    "type": "string"
+                },
+                "slurm_user_token": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.SwitchResponse": {
+            "type": "object",
+            "properties": {
+                "execution_id": {
+                    "type": "string"
+                },
+                "status_url": {
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "JWT bearer token. Obtain via POST /v1/auth/login.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}

@@ -132,3 +132,8 @@ type DashboardSettingsResponse struct {
 	SlurmSifPathConfigured bool   `json:"slurm_sif_path_configured"`
 	SlurmSifPath           string `json:"slurm_sif_path"`
 }
+
+type HealthResponse struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}

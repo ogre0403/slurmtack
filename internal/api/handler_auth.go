@@ -28,6 +28,18 @@ type LoginResponse struct {
 	SlurmtackToken string `json:"slurmtack_token"`
 }
 
+// Login authenticates a Slurm user and returns a Slurmtack JWT.
+// @Summary     Authenticate with Slurm credentials
+// @Description Validates the Slurm user token against the Slurm API and returns a Slurmtack JWT for subsequent requests.
+// @Tags        auth
+// @Accept      json
+// @Produce     json
+// @Param       body body     LoginRequest  true "Slurm credentials"
+// @Success     200  {object} LoginResponse
+// @Failure     400  {object} ErrorResponse
+// @Failure     401  {object} ErrorResponse
+// @Failure     500  {object} ErrorResponse
+// @Router      /v1/auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
