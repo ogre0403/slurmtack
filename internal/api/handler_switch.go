@@ -207,15 +207,15 @@ func (h *SwitchHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, results)
 }
 
-// Steps returns the individual execution steps for a switch.
+// Steps returns the durable execution step timeline for a switch.
 // @Summary     List steps for a switch execution
-// @Description Returns all steps recorded for the given execution, ordered by sequence number.
+// @Description Returns the persisted step timeline for the given execution in ascending sequence order. Each step represents an orchestrator action or asynchronous wait boundary. Active executions include a running step (with no ended_at) indicating the current position. Completed, failed, and cancelled executions include all steps with final status and timing metadata.
 // @Tags        switches
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id  path     string true "Execution ID"
 // @Success     200 {array}  StepResponse
-// @Failure     404 {object} ErrorResponse
+// @Failure     404 {object} ErrorResponse "Execution not found"
 // @Failure     500 {object} ErrorResponse
 // @Router      /v1/switches/{id}/steps [get]
 func (h *SwitchHandler) Steps(c *gin.Context) {

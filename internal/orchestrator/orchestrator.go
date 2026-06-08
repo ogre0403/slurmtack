@@ -33,6 +33,7 @@ type Config struct {
 type Orchestrator struct {
 	store     store.Store
 	runner    *engine.Runner
+	steps     *engine.StepTracker
 	sshRunner remote.Runner
 	slurm     slurm.Client
 	openstack openstack.Client
@@ -46,14 +47,16 @@ type Orchestrator struct {
 const slurmdCommandTimeout = 30 * time.Second
 
 func New(s store.Store, runner *engine.Runner, sshRunner remote.Runner, slurmClient slurm.Client, osClient openstack.Client, cfg Config, logger *slog.Logger) *Orchestrator {
+	l := trace.OrDefault(logger)
 	return &Orchestrator{
 		store:     s,
 		runner:    runner,
+		steps:     engine.NewStepTracker(s, l),
 		sshRunner: sshRunner,
 		slurm:     slurmClient,
 		openstack: osClient,
 		cfg:       cfg,
-		logger:    trace.OrDefault(logger),
+		logger:    l,
 		workers:   make(map[string]*worker),
 	}
 }
@@ -462,8 +465,13 @@ func (o *Orchestrator) executeAction(ctx context.Context, exec *domain.Execution
 }
 
 func (o *Orchestrator) doSubmitPlaceholder(ctx context.Context, exec *domain.Execution) error {
+	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepSubmitPlaceholder, exec.NodeName)
+	if err != nil {
+		return err
+	}
+
 	if o.slurm == nil {
-		return errors.New("slurm client not configured")
+		return o.failStep(ctx, step, errors.New("slurm client not configured"))
 	}
 	effectiveSIFFile := exec.PlaceholderSIFFile
 	if effectiveSIFFile == "" {
@@ -479,11 +487,15 @@ func (o *Orchestrator) doSubmitPlaceholder(ctx context.Context, exec *domain.Exe
 		PlaceholderSIFFile: effectiveSIFFile,
 	})
 	if err != nil {
-		return err
+		return o.failStep(ctx, step, err)
 	}
 
 	exec.PlaceholderJobID = result.JobID
 	if err := o.store.UpdateExecution(ctx, exec); err != nil {
+		return o.failStep(ctx, step, err)
+	}
+
+	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
 		return err
 	}
 
@@ -492,10 +504,19 @@ func (o *Orchestrator) doSubmitPlaceholder(ctx context.Context, exec *domain.Exe
 		"wait_for", "allocation_event",
 		"job_id", result.JobID,
 	)
-	return o.runner.Transition(ctx, exec.ID, domain.StateAwaitingSourceAllocation)
+	if err := o.runner.Transition(ctx, exec.ID, domain.StateAwaitingSourceAllocation); err != nil {
+		return err
+	}
+	_, _ = o.steps.StartStep(ctx, exec.ID, domain.StepWaitForSourceAllocation, exec.NodeName)
+	return nil
 }
 
 func (o *Orchestrator) doAcquireLease(ctx context.Context, exec *domain.Execution) error {
+	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepAcquireLease, exec.NodeName)
+	if err != nil {
+		return err
+	}
+
 	lease := &domain.NodeLease{
 		NodeName:     exec.NodeName,
 		ExecutionID:  exec.ID,
@@ -504,12 +525,16 @@ func (o *Orchestrator) doAcquireLease(ctx context.Context, exec *domain.Executio
 		StateVersion: exec.StateVersion,
 	}
 	if err := o.store.AcquireLease(ctx, lease); err != nil {
-		return err
+		return o.failStep(ctx, step, err)
 	}
 
 	now := time.Now()
 	exec.LockAcquiredAt = &now
 	if err := o.store.UpdateExecution(ctx, exec); err != nil {
+		return o.failStep(ctx, step, err)
+	}
+
+	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
 		return err
 	}
 
@@ -521,24 +546,37 @@ func (o *Orchestrator) doAcquireLease(ctx context.Context, exec *domain.Executio
 }
 
 func (o *Orchestrator) doPrecheck(ctx context.Context, exec *domain.Execution) error {
-	if o.openstack == nil {
-		return errors.New("openstack client not configured")
-	}
-	_, err := o.openstack.GetComputeService(ctx, exec.NodeName)
+	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepPrecheck, exec.NodeName)
 	if err != nil {
 		return err
 	}
 
+	if o.openstack == nil {
+		return o.failStep(ctx, step, errors.New("openstack client not configured"))
+	}
+	_, err = o.openstack.GetComputeService(ctx, exec.NodeName)
+	if err != nil {
+		return o.failStep(ctx, step, err)
+	}
+
+	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
+		return err
+	}
 	return o.runner.Transition(ctx, exec.ID, domain.StatePrecheckPassed)
 }
 
 func (o *Orchestrator) doQuiesce(ctx context.Context, exec *domain.Execution) error {
+	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepQuiesceSource, exec.NodeName)
+	if err != nil {
+		return err
+	}
+
 	if exec.Direction == domain.DirectionSlurmToOpenStack {
 		if o.slurm == nil {
-			return errors.New("slurm client not configured")
+			return o.failStep(ctx, step, errors.New("slurm client not configured"))
 		}
 		if err := o.slurm.DrainNode(ctx, exec.NodeName, "gpu-switch:"+exec.ID); err != nil {
-			return err
+			return o.failStep(ctx, step, err)
 		}
 		trace.ForExecution(o.logger, exec).Info(trace.EventWaitEntered,
 			"action", "quiesce",
@@ -546,10 +584,10 @@ func (o *Orchestrator) doQuiesce(ctx context.Context, exec *domain.Execution) er
 		)
 	} else {
 		if o.openstack == nil {
-			return errors.New("openstack client not configured")
+			return o.failStep(ctx, step, errors.New("openstack client not configured"))
 		}
 		if err := o.openstack.DisableComputeService(ctx, exec.NodeName, "gpu-switch:"+exec.ID); err != nil {
-			return err
+			return o.failStep(ctx, step, err)
 		}
 		trace.ForExecution(o.logger, exec).Info(trace.EventWaitEntered,
 			"action", "quiesce",
@@ -557,7 +595,14 @@ func (o *Orchestrator) doQuiesce(ctx context.Context, exec *domain.Execution) er
 		)
 	}
 
-	return o.runner.Transition(ctx, exec.ID, domain.StateSourceQuiescing)
+	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
+		return err
+	}
+	if err := o.runner.Transition(ctx, exec.ID, domain.StateSourceQuiescing); err != nil {
+		return err
+	}
+	_, _ = o.steps.StartStep(ctx, exec.ID, domain.StepWaitForSourceDrain, exec.NodeName)
+	return nil
 }
 
 func (o *Orchestrator) doVerifySourceQuiesce(ctx context.Context, exec *domain.Execution) error {
@@ -591,6 +636,7 @@ func (o *Orchestrator) doVerifySourceQuiesce(ctx context.Context, exec *domain.E
 		return nil
 	}
 
+	_ = o.steps.CloseRunningStep(ctx, exec.ID, domain.StepStatusSucceeded)
 	trace.ForExecution(o.logger, exec).Info(trace.EventWaitSatisfied,
 		"action", "verify_source_quiesce",
 		"wait_for", "openstack_source_quiesce",
@@ -599,12 +645,20 @@ func (o *Orchestrator) doVerifySourceQuiesce(ctx context.Context, exec *domain.E
 }
 
 func (o *Orchestrator) doReconfigure(ctx context.Context, exec *domain.Execution) error {
+	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepReconfigureHost, exec.NodeName)
+	if err != nil {
+		return err
+	}
+
 	if exec.Direction == domain.DirectionSlurmToOpenStack {
 		if err := o.runSlurmdServiceCommands(ctx, exec, "stop", "disable"); err != nil {
-			return err
+			return o.failStep(ctx, step, err)
 		}
 	}
 
+	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
+		return err
+	}
 	return o.runner.Transition(ctx, exec.ID, domain.StateHostReconfiguring)
 }
 
@@ -651,10 +705,15 @@ func (o *Orchestrator) runSlurmdServiceCommand(ctx context.Context, exec *domain
 }
 
 func (o *Orchestrator) doReboot(ctx context.Context, exec *domain.Execution) error {
-	if o.sshRunner == nil {
-		return errors.New("ssh runner not configured")
+	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepReboot, exec.NodeName)
+	if err != nil {
+		return err
 	}
-	_, err := o.sshRunner.Execute(ctx, remote.CommandRequest{
+
+	if o.sshRunner == nil {
+		return o.failStep(ctx, step, errors.New("ssh runner not configured"))
+	}
+	_, err = o.sshRunner.Execute(ctx, remote.CommandRequest{
 		Host:        exec.NodeName,
 		Command:     "reboot",
 		ExecutionID: exec.ID,
@@ -664,6 +723,9 @@ func (o *Orchestrator) doReboot(ctx context.Context, exec *domain.Execution) err
 	// reboot command may return error as connection drops
 	_ = err
 
+	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
+		return err
+	}
 	trace.ForExecution(o.logger, exec).Info(trace.EventWaitEntered,
 		"action", "reboot",
 		"wait_for", "ssh_reachability",
@@ -672,51 +734,84 @@ func (o *Orchestrator) doReboot(ctx context.Context, exec *domain.Execution) err
 }
 
 func (o *Orchestrator) doSSHPoll(ctx context.Context, exec *domain.Execution) error {
-	execLog := trace.ForExecution(o.logger, exec)
-	err := PollSSHReachable(ctx, o.sshRunner, exec.NodeName, exec.ID, ReachabilityConfig{
-		Interval: o.cfg.SSHPollInterval,
-		Timeout:  o.cfg.SSHPollTimeout,
-	}, o.logger)
-	if errors.Is(err, ErrSSHPollTimeout) {
-		execLog.Warn(trace.EventWaitTimeout, "action", "ssh_poll")
-		return o.runner.FailExecution(ctx, exec.ID, domain.FailureUnknownAfterReboot, "ssh_poll_timeout", "host did not become reachable within timeout")
-	}
+	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepWaitForSSHReachability, exec.NodeName)
 	if err != nil {
 		return err
 	}
 
+	execLog := trace.ForExecution(o.logger, exec)
+	pollErr := PollSSHReachable(ctx, o.sshRunner, exec.NodeName, exec.ID, ReachabilityConfig{
+		Interval: o.cfg.SSHPollInterval,
+		Timeout:  o.cfg.SSHPollTimeout,
+	}, o.logger)
+	if errors.Is(pollErr, ErrSSHPollTimeout) {
+		_ = o.steps.FinishStep(ctx, step, domain.StepStatusFailed, engine.WithErrorClass(domain.FailureUnknownAfterReboot))
+		execLog.Warn(trace.EventWaitTimeout, "action", "ssh_poll")
+		return o.runner.FailExecution(ctx, exec.ID, domain.FailureUnknownAfterReboot, "ssh_poll_timeout", "host did not become reachable within timeout")
+	}
+	if pollErr != nil {
+		return o.failStep(ctx, step, pollErr)
+	}
+
+	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
+		return err
+	}
 	return o.runner.Transition(ctx, exec.ID, domain.StateHostReachable)
 }
 
 func (o *Orchestrator) doAttach(ctx context.Context, exec *domain.Execution) error {
+	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepAttachTarget, exec.NodeName)
+	if err != nil {
+		return err
+	}
+
 	if exec.Direction == domain.DirectionSlurmToOpenStack {
 		if o.openstack == nil {
-			return errors.New("openstack client not configured")
+			return o.failStep(ctx, step, errors.New("openstack client not configured"))
 		}
 		if err := o.openstack.EnableComputeService(ctx, exec.NodeName); err != nil {
-			return err
+			return o.failStep(ctx, step, err)
 		}
 	} else {
 		if err := o.runSlurmdServiceCommands(ctx, exec, "enable", "start"); err != nil {
-			return err
+			return o.failStep(ctx, step, err)
 		}
 		if o.slurm == nil {
-			return errors.New("slurm client not configured")
+			return o.failStep(ctx, step, errors.New("slurm client not configured"))
 		}
 		if err := slurm.EnsureNodeReadyForAttach(ctx, o.slurm, exec.NodeName); err != nil {
-			return err
+			return o.failStep(ctx, step, err)
 		}
 	}
 
+	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
+		return err
+	}
 	return o.runner.Transition(ctx, exec.ID, domain.StateTargetAttaching)
 }
 
 func (o *Orchestrator) doVerify(ctx context.Context, exec *domain.Execution) error {
+	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepVerifyTarget, exec.NodeName)
+	if err != nil {
+		return err
+	}
+	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
+		return err
+	}
 	return o.runner.Transition(ctx, exec.ID, domain.StateVerifying)
 }
 
 func (o *Orchestrator) doComplete(ctx context.Context, exec *domain.Execution) error {
+	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepCompleteExecution, exec.NodeName)
+	if err != nil {
+		return err
+	}
+
 	if err := o.store.ReleaseLease(ctx, exec.NodeName, exec.ID); err != nil && !errors.Is(err, store.ErrLeaseNotHeld) {
+		return o.failStep(ctx, step, err)
+	}
+
+	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
 		return err
 	}
 
@@ -724,7 +819,6 @@ func (o *Orchestrator) doComplete(ctx context.Context, exec *domain.Execution) e
 		return err
 	}
 
-	// Re-read execution from store to get the updated state and version
 	fresh, err := o.store.GetExecution(ctx, exec.ID)
 	if err != nil {
 		return fmt.Errorf("re-reading execution: %w", err)
@@ -735,6 +829,13 @@ func (o *Orchestrator) doComplete(ctx context.Context, exec *domain.Execution) e
 }
 
 func (o *Orchestrator) doCancelCleanup(ctx context.Context, exec *domain.Execution) error {
+	_ = o.steps.CloseRunningStep(ctx, exec.ID, domain.StepStatusSkipped)
+
+	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepCancelCleanup, exec.NodeName)
+	if err != nil {
+		return err
+	}
+
 	src := exec.CancellationSourceState
 	execLog := trace.ForExecution(o.logger, exec)
 	execLog.Info("cancel.cleanup_started",
@@ -749,10 +850,10 @@ func (o *Orchestrator) doCancelCleanup(ctx context.Context, exec *domain.Executi
 	case domain.StateAwaitingSourceAllocation:
 		if exec.PlaceholderJobID != "" {
 			if o.slurm == nil {
-				return errors.New("slurm client not configured")
+				return o.failStep(ctx, step, errors.New("slurm client not configured"))
 			}
 			if err := o.cancelJobWithExecIdentity(ctx, exec); err != nil {
-				return fmt.Errorf("cancelling placeholder job %s: %w", exec.PlaceholderJobID, err)
+				return o.failStep(ctx, step, fmt.Errorf("cancelling placeholder job %s: %w", exec.PlaceholderJobID, err))
 			}
 		}
 
@@ -760,43 +861,45 @@ func (o *Orchestrator) doCancelCleanup(ctx context.Context, exec *domain.Executi
 		switch exec.Direction {
 		case domain.DirectionSlurmToOpenStack:
 			if o.slurm == nil {
-				return errors.New("slurm client not configured")
+				return o.failStep(ctx, step, errors.New("slurm client not configured"))
 			}
 			if err := o.slurm.ResumeNode(ctx, exec.NodeName); err != nil {
-				return fmt.Errorf("resuming slurm node: %w", err)
+				return o.failStep(ctx, step, fmt.Errorf("resuming slurm node: %w", err))
 			}
 			if exec.PlaceholderJobID != "" {
 				if err := o.cancelJobWithExecIdentity(ctx, exec); err != nil {
-					return fmt.Errorf("cancelling placeholder job %s: %w", exec.PlaceholderJobID, err)
+					return o.failStep(ctx, step, fmt.Errorf("cancelling placeholder job %s: %w", exec.PlaceholderJobID, err))
 				}
 			}
 			if err := o.store.ReleaseLease(ctx, exec.NodeName, exec.ID); err != nil && !errors.Is(err, store.ErrLeaseNotHeld) {
-				return fmt.Errorf("releasing lease: %w", err)
+				return o.failStep(ctx, step, fmt.Errorf("releasing lease: %w", err))
 			}
 
 		case domain.DirectionOpenStackToSlurm:
 			if o.openstack == nil {
-				return errors.New("openstack client not configured")
+				return o.failStep(ctx, step, errors.New("openstack client not configured"))
 			}
 			if err := o.openstack.EnableComputeService(ctx, exec.NodeName); err != nil {
-				return fmt.Errorf("re-enabling openstack compute service: %w", err)
+				return o.failStep(ctx, step, fmt.Errorf("re-enabling openstack compute service: %w", err))
 			}
 			if err := o.store.ReleaseLease(ctx, exec.NodeName, exec.ID); err != nil && !errors.Is(err, store.ErrLeaseNotHeld) {
-				return fmt.Errorf("releasing lease: %w", err)
+				return o.failStep(ctx, step, fmt.Errorf("releasing lease: %w", err))
 			}
 		}
 
 	default:
-		return fmt.Errorf("unknown cancellation source state: %s", src)
+		return o.failStep(ctx, step, fmt.Errorf("unknown cancellation source state: %s", src))
 	}
 
+	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
+		return err
+	}
 	execLog.Info("cancel.cleanup_succeeded", "source_state", string(src))
 
 	if err := o.runner.Transition(ctx, exec.ID, domain.StateCancelled); err != nil {
 		return fmt.Errorf("transitioning to cancelled: %w", err)
 	}
 
-	// Re-read to get updated version for error details
 	fresh, err := o.store.GetExecution(ctx, exec.ID)
 	if err != nil {
 		return fmt.Errorf("re-reading execution after cancel: %w", err)
@@ -822,6 +925,11 @@ func (o *Orchestrator) cancelJobWithExecIdentity(ctx context.Context, exec *doma
 		})
 	}
 	return o.slurm.CancelJob(ctx, exec.PlaceholderJobID)
+}
+
+func (o *Orchestrator) failStep(ctx context.Context, step *domain.StepRecord, err error) error {
+	_ = o.steps.FinishStep(ctx, step, domain.StepStatusFailed)
+	return err
 }
 
 func classifyFailure(state domain.SwitchState) domain.FailureClass {

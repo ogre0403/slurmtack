@@ -525,6 +525,58 @@ func TestDashboardJS_SifInputTriggersHintRecompute(t *testing.T) {
 	}
 }
 
+func TestDashboardJS_StepTimelineRendering(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	required := []string{
+		"step-header",
+		"step-seq",
+		"step-name",
+		"step-meta",
+		"step-error",
+		"step-paths",
+		"formatStepName",
+		"calcDuration",
+		"isWaitStep",
+		"STEP_LABELS",
+		"step-wait",
+		"step-action",
+		"step-active-wait",
+	}
+	for _, s := range required {
+		if !strings.Contains(js, s) {
+			t.Errorf("dashboard JS missing step timeline element: %s", s)
+		}
+	}
+}
+
+func TestDashboardHTML_StepTimelineStyles(t *testing.T) {
+	htmlPath := "../../docker/nginx/html/index.html"
+	content, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("reading dashboard HTML: %v", err)
+	}
+	html := string(content)
+
+	required := []string{
+		".step-timeline .step-status.skipped",
+		".step-timeline .step-meta",
+		".step-timeline .step-name",
+		".step-timeline .step-wait",
+		"pulse-wait",
+	}
+	for _, s := range required {
+		if !strings.Contains(html, s) {
+			t.Errorf("dashboard HTML missing step style: %s", s)
+		}
+	}
+}
+
 func TestHealthEndpoint_Failure(t *testing.T) {
 	srv, _ := setupHistoryServer(t)
 

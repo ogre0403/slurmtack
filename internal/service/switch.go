@@ -11,6 +11,7 @@ import (
 
 	"github.com/slurmtack/slurmtack/internal/config"
 	"github.com/slurmtack/slurmtack/internal/domain"
+	"github.com/slurmtack/slurmtack/internal/engine"
 	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
 	"github.com/slurmtack/slurmtack/internal/trace"
@@ -59,6 +60,7 @@ type PlaceholderSIFDefaults struct {
 
 type SwitchService struct {
 	store                   store.Store
+	steps                   *engine.StepTracker
 	publisher               EventPublisher
 	intake                  ExecutionIntake
 	logger                  *slog.Logger
@@ -72,7 +74,8 @@ func NewSwitchService(s store.Store, logger *slog.Logger, publishers ...EventPub
 	if len(publishers) > 0 {
 		publisher = publishers[0]
 	}
-	return &SwitchService{store: s, publisher: publisher, logger: trace.OrDefault(logger)}
+	l := trace.OrDefault(logger)
+	return &SwitchService{store: s, steps: engine.NewStepTracker(s, l), publisher: publisher, logger: l}
 }
 
 func (s *SwitchService) WithExecutionIntake(intake ExecutionIntake) *SwitchService {
@@ -190,6 +193,11 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 	if err := s.store.CreateExecution(ctx, exec); err != nil {
 		return "", fmt.Errorf("creating execution: %w", err)
 	}
+
+	if req.Direction == domain.DirectionOpenStackToSlurm {
+		_, _ = s.steps.StartStep(ctx, id, domain.StepWaitForTargetNode, nodeName)
+	}
+
 	if s.publisher != nil {
 		s.publishAdmissionEvents(ctx, id, req)
 	}
@@ -308,6 +316,8 @@ func (s *SwitchService) CancelSwitch(ctx context.Context, executionID string) er
 	if err := s.store.AdvanceState(ctx, executionID, exec.StateVersion, domain.StateCancelling); err != nil {
 		return fmt.Errorf("transitioning to cancelling: %w", err)
 	}
+
+	_ = s.steps.CloseRunningStep(ctx, executionID, domain.StepStatusSkipped)
 
 	s.logger.Info("cancel.accepted",
 		"execution_id", executionID,

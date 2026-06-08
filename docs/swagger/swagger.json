@@ -377,7 +377,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns all steps recorded for the given execution, ordered by sequence number.",
+                "description": "Returns the persisted step timeline for the given execution in ascending sequence order. Each step represents an orchestrator action or asynchronous wait boundary. Active executions include a running step (with no ended_at) indicating the current position. Completed, failed, and cancelled executions include all steps with final status and timing metadata.",
                 "produces": [
                     "application/json"
                 ],
@@ -405,7 +405,7 @@
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "Execution not found",
                         "schema": {
                             "$ref": "#/definitions/internal_api.ErrorResponse"
                         }
@@ -726,19 +726,22 @@
                     "type": "string"
                 },
                 "error_class": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "precheck_blocked"
                 },
                 "exit_code": {
                     "type": "integer"
                 },
                 "host": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "gpu-01"
                 },
                 "retry_count": {
                     "type": "integer"
                 },
                 "sequence": {
-                    "type": "integer"
+                    "type": "integer",
+                    "example": 3
                 },
                 "snapshot_after_path": {
                     "type": "string"
@@ -750,7 +753,15 @@
                     "type": "string"
                 },
                 "status": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "running",
+                        "succeeded",
+                        "failed",
+                        "skipped"
+                    ],
+                    "example": "succeeded"
                 },
                 "stderr_path": {
                     "type": "string"
@@ -759,7 +770,8 @@
                     "type": "string"
                 },
                 "step_name": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "acquire_lease"
                 }
             }
         },

@@ -10,6 +10,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/slurmtack/slurmtack/internal/domain"
+	"github.com/slurmtack/slurmtack/internal/engine"
 	"github.com/slurmtack/slurmtack/internal/store"
 	"github.com/slurmtack/slurmtack/internal/trace"
 )
@@ -17,6 +18,7 @@ import (
 type Consumer struct {
 	conn   *Connection
 	store  store.Store
+	steps  *engine.StepTracker
 	intake IntakeHandler
 	logger *slog.Logger
 }
@@ -30,7 +32,8 @@ func NewConsumer(conn *Connection, s store.Store, logger *slog.Logger, intakeHan
 	if len(intakeHandlers) > 0 {
 		intake = intakeHandlers[0]
 	}
-	return &Consumer{conn: conn, store: s, intake: intake, logger: trace.OrDefault(logger)}
+	l := trace.OrDefault(logger)
+	return &Consumer{conn: conn, store: s, steps: engine.NewStepTracker(s, l), intake: intake, logger: l}
 }
 
 func (c *Consumer) Run(ctx context.Context) error {
@@ -224,6 +227,7 @@ func (c *Consumer) handleNodeSelected(ctx context.Context, msg amqp.Delivery) {
 		return
 	}
 
+	_ = c.steps.CloseRunningStep(ctx, evt.ExecutionID, domain.StepStatusSucceeded)
 	execLog.Info("mq.node_selected_bound", "new_state", string(domain.StateNodeIdentified))
 	c.admitExecution(ctx, evt.ExecutionID)
 	msg.Ack(false)
@@ -286,6 +290,7 @@ func (c *Consumer) handleAllocation(ctx context.Context, msg amqp.Delivery) {
 		return
 	}
 
+	_ = c.steps.CloseRunningStep(ctx, evt.ExecutionID, domain.StepStatusSucceeded)
 	execLog.Info(trace.EventWaitSatisfied, "component", "mq", "event_type", "allocation", "new_state", string(domain.StateNodeIdentified))
 	c.admitExecution(ctx, evt.ExecutionID)
 	msg.Ack(false)
@@ -338,6 +343,7 @@ func (c *Consumer) handleDrained(ctx context.Context, msg amqp.Delivery) {
 		return
 	}
 
+	_ = c.steps.CloseRunningStep(ctx, evt.ExecutionID, domain.StepStatusSucceeded)
 	execLog.Info(trace.EventWaitSatisfied, "component", "mq", "event_type", "drained", "new_state", string(domain.StateSourceDetached))
 	c.admitExecution(ctx, evt.ExecutionID)
 	msg.Ack(false)

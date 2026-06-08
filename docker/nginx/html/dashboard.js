@@ -367,10 +367,31 @@
       if (Array.isArray(steps)) {
         steps.forEach(function (s) {
           html += '<li>';
-          html += '<span class="step-status ' + escapeAttr(s.status) + '">' + escapeHtml(s.status) + '</span> ';
-          html += escapeHtml(s.step_name);
-          if (s.host) html += ' <small>(' + escapeHtml(s.host) + ')</small>';
-          if (s.exit_code !== null && s.exit_code !== undefined) html += ' <small>exit=' + s.exit_code + '</small>';
+          var waitClass = isWaitStep(s.step_name) ? ' step-wait' : ' step-action';
+          var runningWait = (s.status === 'running' && isWaitStep(s.step_name)) ? ' step-active-wait' : '';
+          html += '<div class="step-header' + waitClass + runningWait + '">';
+          html += '<span class="step-seq">#' + s.sequence + '</span>';
+          html += '<span class="step-status ' + escapeAttr(s.status) + '">' + escapeHtml(s.status) + '</span>';
+          html += '<span class="step-name">' + escapeHtml(formatStepName(s.step_name)) + '</span>';
+          html += '</div>';
+          var meta = [];
+          if (s.host) meta.push('<span>⌂ ' + escapeHtml(s.host) + '</span>');
+          if (s.started_at) meta.push('<span>▶ ' + formatTime(s.started_at) + '</span>');
+          if (s.ended_at) {
+            meta.push('<span>■ ' + formatTime(s.ended_at) + '</span>');
+            var dur = calcDuration(s.started_at, s.ended_at);
+            if (dur) meta.push('<span>⏱ ' + dur + '</span>');
+          }
+          if (s.retry_count > 0) meta.push('<span>retry: ' + s.retry_count + '</span>');
+          if (s.exit_code !== null && s.exit_code !== undefined) meta.push('<span>exit: ' + s.exit_code + '</span>');
+          if (meta.length) html += '<div class="step-meta">' + meta.join('') + '</div>';
+          if (s.error_class) html += '<div class="step-error">' + escapeHtml(s.error_class) + '</div>';
+          var paths = [];
+          if (s.stdout_path) paths.push('stdout: ' + s.stdout_path);
+          if (s.stderr_path) paths.push('stderr: ' + s.stderr_path);
+          if (s.snapshot_before_path) paths.push('snap-before: ' + s.snapshot_before_path);
+          if (s.snapshot_after_path) paths.push('snap-after: ' + s.snapshot_after_path);
+          if (paths.length) html += '<div class="step-paths">' + escapeHtml(paths.join(' | ')) + '</div>';
           html += '</li>';
         });
       }
@@ -485,6 +506,50 @@
       var d = new Date(iso);
       return d.toLocaleString();
     } catch (e) { return iso; }
+  }
+
+  var STEP_LABELS = {
+    submit_placeholder: 'Submit Placeholder Job',
+    wait_for_source_allocation: 'Waiting for Allocation',
+    wait_for_target_node: 'Waiting for Target Node',
+    acquire_lease: 'Acquire Node Lease',
+    precheck: 'Precheck',
+    quiesce_source: 'Quiesce Source',
+    wait_for_source_drain: 'Waiting for Drain',
+    verify_source_quiesce: 'Verify Source Quiesce',
+    reconfigure_host: 'Reconfigure Host',
+    reboot: 'Reboot',
+    wait_for_ssh_reachability: 'Waiting for SSH',
+    attach_target: 'Attach Target',
+    verify_target: 'Verify Target',
+    complete_execution: 'Complete',
+    cancel_cleanup: 'Cancel Cleanup'
+  };
+
+  function formatStepName(name) {
+    if (!name) return '';
+    return STEP_LABELS[name] || name.replace(/_/g, ' ');
+  }
+
+  function isWaitStep(name) {
+    return name && name.indexOf('wait_') === 0;
+  }
+
+  function calcDuration(startIso, endIso) {
+    if (!startIso || !endIso) return '';
+    try {
+      var ms = new Date(endIso) - new Date(startIso);
+      if (ms < 0) return '';
+      if (ms < 1000) return ms + 'ms';
+      var s = Math.floor(ms / 1000);
+      if (s < 60) return s + 's';
+      var m = Math.floor(s / 60);
+      s = s % 60;
+      if (m < 60) return m + 'm ' + s + 's';
+      var h = Math.floor(m / 60);
+      m = m % 60;
+      return h + 'h ' + m + 'm';
+    } catch (e) { return ''; }
   }
 
   async function ensureToken() {

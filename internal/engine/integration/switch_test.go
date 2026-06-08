@@ -275,10 +275,16 @@ func TestOpenStackToSlurmPrecheckBlocksWithInstances(t *testing.T) {
 	}
 
 	steps, _ := s.ListSteps(ctx, execID)
-	if len(steps) == 0 {
-		t.Fatal("step record should be created")
+	var precheckStep *domain.StepRecord
+	for _, step := range steps {
+		if step.StepName == "openstack_precheck" {
+			precheckStep = step
+		}
 	}
-	if steps[0].Status != domain.StepStatusFailed {
-		t.Fatalf("step should be failed, got %s", steps[0].Status)
+	if precheckStep == nil {
+		t.Fatal("precheck step record should be created")
+	}
+	if precheckStep.Status != domain.StepStatusFailed {
+		t.Fatalf("step should be failed, got %s", precheckStep.Status)
 	}
 }

@@ -82,11 +82,24 @@
     .exec-current-state { font-size: 1rem; font-weight: 700; margin-bottom: 8px !important; color: #1a1a2e; }
     #detail-drawer .close-btn { position: absolute; top: 12px; right: 16px; cursor: pointer; font-size: 1.2rem; background: none; border: none; }
     .step-timeline { list-style: none; }
-    .step-timeline li { padding: 8px 0; border-bottom: 1px solid #eee; font-size: 0.8rem; }
-    .step-timeline .step-status { font-weight: 600; }
-    .step-timeline .step-status.succeeded { color: #2ecc71; }
-    .step-timeline .step-status.failed { color: #e74c3c; }
-    .step-timeline .step-status.running { color: #f39c12; }
+    .step-timeline li { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 0.8rem; }
+    .step-timeline li:last-child { border-bottom: none; }
+    .step-timeline .step-header { display: flex; align-items: center; gap: 8px; }
+    .step-timeline .step-seq { color: #999; font-size: 0.7rem; min-width: 20px; }
+    .step-timeline .step-status { font-weight: 600; font-size: 0.7rem; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; }
+    .step-timeline .step-status.succeeded { color: #2ecc71; background: #eafaf1; }
+    .step-timeline .step-status.failed { color: #e74c3c; background: #fdedec; }
+    .step-timeline .step-status.running { color: #f39c12; background: #fef9e7; }
+    .step-timeline .step-status.skipped { color: #95a5a6; background: #f4f6f6; }
+    .step-timeline .step-status.pending { color: #7f8c8d; background: #f4f6f6; }
+    .step-timeline .step-name { font-weight: 500; color: #2c3e50; }
+    .step-timeline .step-meta { margin-top: 4px; padding-left: 28px; color: #7f8c8d; font-size: 0.72rem; display: flex; flex-wrap: wrap; gap: 8px; }
+    .step-timeline .step-meta span { white-space: nowrap; }
+    .step-timeline .step-error { margin-top: 4px; padding-left: 28px; color: #e74c3c; font-size: 0.72rem; }
+    .step-timeline .step-paths { margin-top: 2px; padding-left: 28px; color: #95a5a6; font-size: 0.68rem; }
+    .step-timeline .step-wait .step-name { font-style: italic; color: #7f8c8d; }
+    .step-timeline .step-active-wait { animation: pulse-wait 2s ease-in-out infinite; }
+    @keyframes pulse-wait { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
     #loading-overlay { position: fixed; top: 48px; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); display: flex; align-items: center; justify-content: center; z-index: 50; }
     #loading-overlay.hidden { display: none; }

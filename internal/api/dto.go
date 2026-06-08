@@ -54,16 +54,19 @@ type ExecutionDetail struct {
 	CancellationSourceState  string     `json:"cancellation_source_state,omitempty"`
 }
 
+// StepResponse represents one step in the durable execution timeline.
+// Each step corresponds to an orchestrator action or asynchronous wait boundary.
+// Steps with status "running" and no ended_at indicate the execution's current position.
 type StepResponse struct {
-	Sequence           int        `json:"sequence"`
-	StepName           string     `json:"step_name"`
-	Host               string     `json:"host"`
+	Sequence           int        `json:"sequence" example:"3"`
+	StepName           string     `json:"step_name" example:"acquire_lease"`
+	Host               string     `json:"host" example:"gpu-01"`
 	StartedAt          time.Time  `json:"started_at"`
 	EndedAt            *time.Time `json:"ended_at,omitempty"`
-	Status             string     `json:"status"`
+	Status             string     `json:"status" example:"succeeded" enums:"pending,running,succeeded,failed,skipped"`
 	RetryCount         int        `json:"retry_count"`
 	ExitCode           *int       `json:"exit_code,omitempty"`
-	ErrorClass         string     `json:"error_class,omitempty"`
+	ErrorClass         string     `json:"error_class,omitempty" example:"precheck_blocked"`
 	CommandID          string     `json:"command_id,omitempty"`
 	StdoutPath         string     `json:"stdout_path,omitempty"`
 	StderrPath         string     `json:"stderr_path,omitempty"`

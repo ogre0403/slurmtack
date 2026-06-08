@@ -200,3 +200,74 @@ func TestGetExecution_DetailFields(t *testing.T) {
 		t.Error("lock_acquired_at should be set")
 	}
 }
+
+func TestSteps_ReturnsDetailedMetadata(t *testing.T) {
+	srv, s := setupHistoryServer(t)
+	exec := &domain.Execution{
+		ID: "step-meta-exec", NodeName: "gpu-01", Direction: domain.DirectionSlurmToOpenStack,
+		OverallStatus: domain.OverallStatusFailed, CurrentState: domain.StateFailedNonDestructive,
+		RequestedAt: time.Now(), RequestedBy: "test",
+		DesiredOwner: domain.OwnerOpenStack, PreviousOwner: domain.OwnerSlurm,
+	}
+	s.CreateExecution(context.Background(), exec)
+
+	now := time.Now()
+	ended := now.Add(5 * time.Second)
+	exitCode := 1
+	steps := []*domain.StepRecord{
+		{
+			ExecutionID: "step-meta-exec", StepName: "submit_placeholder", Sequence: 1,
+			Host: "gpu-01", StartedAt: now, EndedAt: &ended, Status: domain.StepStatusSucceeded,
+		},
+		{
+			ExecutionID: "step-meta-exec", StepName: "quiesce_source", Sequence: 2,
+			Host: "gpu-01", StartedAt: ended, Status: domain.StepStatusFailed,
+			RetryCount: 2, ExitCode: &exitCode, ErrorClass: domain.FailurePrecheckBlocked,
+			StdoutPath: "/var/log/out.log", StderrPath: "/var/log/err.log",
+		},
+	}
+	for _, step := range steps {
+		s.CreateStep(context.Background(), step)
+	}
+
+	w := doAuthGet(srv, "/v1/switches/step-meta-exec/steps")
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	var result []StepResponse
+	json.Unmarshal(w.Body.Bytes(), &result)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(result))
+	}
+
+	s1 := result[0]
+	if s1.StepName != "submit_placeholder" {
+		t.Errorf("step[0].step_name = %q", s1.StepName)
+	}
+	if s1.EndedAt == nil {
+		t.Error("step[0].ended_at should be set for completed steps")
+	}
+	if s1.Host != "gpu-01" {
+		t.Errorf("step[0].host = %q", s1.Host)
+	}
+
+	s2 := result[1]
+	if s2.Status != "failed" {
+		t.Errorf("step[1].status = %q, want failed", s2.Status)
+	}
+	if s2.RetryCount != 2 {
+		t.Errorf("step[1].retry_count = %d, want 2", s2.RetryCount)
+	}
+	if s2.ExitCode == nil || *s2.ExitCode != 1 {
+		t.Errorf("step[1].exit_code = %v, want 1", s2.ExitCode)
+	}
+	if s2.ErrorClass != "precheck_blocked" {
+		t.Errorf("step[1].error_class = %q, want precheck_blocked", s2.ErrorClass)
+	}
+	if s2.StdoutPath != "/var/log/out.log" {
+		t.Errorf("step[1].stdout_path = %q", s2.StdoutPath)
+	}
+	if s2.StderrPath != "/var/log/err.log" {
+		t.Errorf("step[1].stderr_path = %q", s2.StderrPath)
+	}
+}

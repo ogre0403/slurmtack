@@ -199,14 +199,17 @@ definitions:
       ended_at:
         type: string
       error_class:
+        example: precheck_blocked
         type: string
       exit_code:
         type: integer
       host:
+        example: gpu-01
         type: string
       retry_count:
         type: integer
       sequence:
+        example: 3
         type: integer
       snapshot_after_path:
         type: string
@@ -215,12 +218,20 @@ definitions:
       started_at:
         type: string
       status:
+        enum:
+        - pending
+        - running
+        - succeeded
+        - failed
+        - skipped
+        example: succeeded
         type: string
       stderr_path:
         type: string
       stdout_path:
         type: string
       step_name:
+        example: acquire_lease
         type: string
     type: object
   internal_api.SwitchRequest:
@@ -502,8 +513,11 @@ paths:
       - switches
   /v1/switches/{id}/steps:
     get:
-      description: Returns all steps recorded for the given execution, ordered by
-        sequence number.
+      description: Returns the persisted step timeline for the given execution in
+        ascending sequence order. Each step represents an orchestrator action or asynchronous
+        wait boundary. Active executions include a running step (with no ended_at)
+        indicating the current position. Completed, failed, and cancelled executions
+        include all steps with final status and timing metadata.
       parameters:
       - description: Execution ID
         in: path
@@ -520,7 +534,7 @@ paths:
               $ref: '#/definitions/internal_api.StepResponse'
             type: array
         "404":
-          description: Not Found
+          description: Execution not found
           schema:
             $ref: '#/definitions/internal_api.ErrorResponse'
         "500":

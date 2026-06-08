@@ -461,3 +461,117 @@ func TestRequestSwitchPublishesNodeSelectedAndAdmitsWithoutManualRMQClient(t *te
 
 	t.Fatal("timed out waiting for service-published node-selected event admission to acquire lease")
 }
+
+func TestHandleAllocation_ClosesWaitStep(t *testing.T) {
+	s := store.NewMemoryStore()
+	seedExecution(t, s, &domain.Execution{
+		ID:            "exec-alloc-step",
+		Direction:     domain.DirectionSlurmToOpenStack,
+		RequestedBy:   "operator",
+		CurrentState:  domain.StateAwaitingSourceAllocation,
+		DesiredOwner:  domain.OwnerOpenStack,
+		PreviousOwner: domain.OwnerSlurm,
+	})
+
+	tracker := engine.NewStepTracker(s, nil)
+	_, _ = tracker.StartStep(context.Background(), "exec-alloc-step", domain.StepWaitForSourceAllocation, "")
+
+	ack := &ackRecorder{}
+	consumer := newTestConsumer(s)
+	consumer.handleAllocation(context.Background(), newDelivery(t, AllocationEvent{
+		ExecutionID: "exec-alloc-step",
+		JobID:       "job-1",
+		NodeName:    "gpu-01",
+	}, ack))
+
+	if ack.acked != 1 {
+		t.Fatalf("acks = %d, want 1", ack.acked)
+	}
+
+	steps, _ := s.ListSteps(context.Background(), "exec-alloc-step")
+	if len(steps) == 0 {
+		t.Fatal("expected at least 1 step")
+	}
+	if steps[0].Status != domain.StepStatusSucceeded {
+		t.Errorf("wait step status = %q, want succeeded", steps[0].Status)
+	}
+	if steps[0].EndedAt == nil {
+		t.Error("wait step ended_at should be set")
+	}
+}
+
+func TestHandleDrained_ClosesWaitStep(t *testing.T) {
+	s := store.NewMemoryStore()
+	seedExecution(t, s, &domain.Execution{
+		ID:            "exec-drained-step",
+		NodeName:      "gpu-01",
+		Direction:     domain.DirectionSlurmToOpenStack,
+		RequestedBy:   "operator",
+		CurrentState:  domain.StateSourceQuiescing,
+		DesiredOwner:  domain.OwnerOpenStack,
+		PreviousOwner: domain.OwnerSlurm,
+		StateVersion:  4,
+	})
+
+	tracker := engine.NewStepTracker(s, nil)
+	_, _ = tracker.StartStep(context.Background(), "exec-drained-step", domain.StepWaitForSourceDrain, "gpu-01")
+
+	ack := &ackRecorder{}
+	consumer := newTestConsumer(s)
+	consumer.handleDrained(context.Background(), newDelivery(t, NodeDrainedEvent{
+		ExecutionID: "exec-drained-step",
+		NodeName:    "gpu-01",
+	}, ack))
+
+	if ack.acked != 1 {
+		t.Fatalf("acks = %d, want 1", ack.acked)
+	}
+
+	steps, _ := s.ListSteps(context.Background(), "exec-drained-step")
+	if len(steps) == 0 {
+		t.Fatal("expected at least 1 step")
+	}
+	if steps[0].Status != domain.StepStatusSucceeded {
+		t.Errorf("wait step status = %q, want succeeded", steps[0].Status)
+	}
+	if steps[0].EndedAt == nil {
+		t.Error("wait step ended_at should be set")
+	}
+}
+
+func TestHandleNodeSelected_ClosesWaitStep(t *testing.T) {
+	s := store.NewMemoryStore()
+	seedExecution(t, s, &domain.Execution{
+		ID:            "exec-nodesel-step",
+		Direction:     domain.DirectionOpenStackToSlurm,
+		RequestedBy:   "operator",
+		CurrentState:  domain.StateAwaitingTargetNode,
+		DesiredOwner:  domain.OwnerSlurm,
+		PreviousOwner: domain.OwnerOpenStack,
+	})
+
+	tracker := engine.NewStepTracker(s, nil)
+	_, _ = tracker.StartStep(context.Background(), "exec-nodesel-step", domain.StepWaitForTargetNode, "")
+
+	ack := &ackRecorder{}
+	consumer := newTestConsumer(s)
+	consumer.handleNodeSelected(context.Background(), newDelivery(t, NodeSelectedEvent{
+		ExecutionID: "exec-nodesel-step",
+		NodeName:    "gpu-02",
+	}, ack))
+
+	if ack.acked != 1 {
+		t.Fatalf("acks = %d, want 1", ack.acked)
+	}
+
+	steps, _ := s.ListSteps(context.Background(), "exec-nodesel-step")
+	if len(steps) == 0 {
+		t.Fatal("expected at least 1 step")
+	}
+	if steps[0].Status != domain.StepStatusSucceeded {
+		t.Errorf("wait step status = %q, want succeeded", steps[0].Status)
+	}
+	if steps[0].EndedAt == nil {
+		t.Error("wait step ended_at should be set")
+	}
+}
