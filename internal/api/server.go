@@ -8,16 +8,43 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/slurmtack/slurmtack/internal/service"
+	"github.com/slurmtack/slurmtack/internal/slurm"
 	"github.com/slurmtack/slurmtack/internal/store"
 	"github.com/slurmtack/slurmtack/internal/trace"
 )
+
+type ServerOption func(*serverOptions)
+
+type serverOptions struct {
+	jwtManager   *JWTManager
+	slurmClient  slurm.Client
+	slurmSifPath string
+}
+
+func WithJWTAuth(jwtManager *JWTManager, slurmClient slurm.Client) ServerOption {
+	return func(o *serverOptions) {
+		o.jwtManager = jwtManager
+		o.slurmClient = slurmClient
+	}
+}
+
+func WithSlurmSifPath(path string) ServerOption {
+	return func(o *serverOptions) {
+		o.slurmSifPath = path
+	}
+}
 
 type Server struct {
 	httpServer *http.Server
 	engine     *gin.Engine
 }
 
-func NewServer(listenAddr string, token string, sqlStore *store.SQLiteStore, svc *service.SwitchService, inventoryHandler *InventoryHandler, logger *slog.Logger) *Server {
+func NewServer(listenAddr string, sqlStore *store.SQLiteStore, svc *service.SwitchService, inventoryHandler *InventoryHandler, logger *slog.Logger, opts ...ServerOption) *Server {
+	var sopts serverOptions
+	for _, o := range opts {
+		o(&sopts)
+	}
+
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(accessLogMiddleware(trace.OrDefault(logger).With("component", "api")), gin.Recovery())
@@ -25,8 +52,13 @@ func NewServer(listenAddr string, token string, sqlStore *store.SQLiteStore, svc
 	healthHandler := NewHealthHandler(sqlStore)
 	engine.GET("/health", healthHandler.Check)
 
+	if sopts.jwtManager != nil && sopts.slurmClient != nil {
+		authHandler := NewAuthHandler(sopts.jwtManager, sopts.slurmClient)
+		engine.POST("/v1/auth/login", authHandler.Login)
+	}
+
 	switchHandler := NewSwitchHandler(svc, sqlStore)
-	v1 := engine.Group("/v1", BearerAuth(token))
+	v1 := engine.Group("/v1", BearerAuth(sopts.jwtManager))
 	{
 		v1.POST("/switches", switchHandler.Create)
 		v1.GET("/switches/:id", switchHandler.Get)
@@ -36,6 +68,8 @@ func NewServer(listenAddr string, token string, sqlStore *store.SQLiteStore, svc
 		if inventoryHandler != nil {
 			v1.GET("/dashboard/inventory", inventoryHandler.Get)
 		}
+		settingsHandler := NewDashboardSettingsHandler(sopts.slurmSifPath)
+		v1.GET("/dashboard/settings", settingsHandler.Get)
 	}
 
 	return &Server{

@@ -149,7 +149,12 @@ func main() {
 	if slurmClient != nil && osClient != nil {
 		inventoryHandler = api.NewInventoryHandler(slurmClient, osClient, sqlStore)
 	}
-	srv := api.NewServer(cfg.ListenAddr, cfg.APIToken, sqlStore, svc, inventoryHandler, baseLogger)
+
+	jwtMgr := api.NewJWTManager(cfg.JWTSigningKey, time.Hour)
+	var serverOpts []api.ServerOption
+	serverOpts = append(serverOpts, api.WithJWTAuth(jwtMgr, slurmClient))
+	serverOpts = append(serverOpts, api.WithSlurmSifPath(cfg.PlaceholderSIFPath))
+	srv := api.NewServer(cfg.ListenAddr, sqlStore, svc, inventoryHandler, baseLogger, serverOpts...)
 
 	wg.Add(1)
 	go func() {

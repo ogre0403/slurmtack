@@ -296,17 +296,71 @@ func TestDashboardJS_SlurmSettingsPersistence(t *testing.T) {
 	js := string(content)
 
 	required := []string{
-		"slurmtack_slurm_settings",
 		"loadSlurmSettingsFromStorage",
 		"saveSlurmSettings",
 		"clearSlurmSettings",
-		"localStorage.setItem(SLURM_SETTINGS_KEY",
-		"localStorage.removeItem(SLURM_SETTINGS_KEY)",
+		"sessionStorage.setItem(SLURM_TOKEN_KEY",
+		"sessionStorage.removeItem(SLURM_TOKEN_KEY)",
+		"localStorage.setItem(SLURM_ACCOUNT_KEY",
+		"localStorage.setItem(SLURM_SIF_KEY",
+		"localStorage.removeItem(SLURM_ACCOUNT_KEY)",
+		"localStorage.removeItem(SLURM_SIF_KEY)",
 	}
 	for _, s := range required {
 		if !strings.Contains(js, s) {
 			t.Errorf("dashboard JS missing Slurm settings persistence hook: %s", s)
 		}
+	}
+}
+
+func TestDashboardJS_HybridStorageSplit(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "sessionStorage.getItem(SLURM_TOKEN_KEY)") {
+		t.Error("slurm_user_token should be loaded from sessionStorage")
+	}
+	if !strings.Contains(js, "localStorage.getItem(SLURM_ACCOUNT_KEY)") {
+		t.Error("slurm_account should be loaded from localStorage")
+	}
+	if !strings.Contains(js, "localStorage.getItem(SLURM_SIF_KEY)") {
+		t.Error("placeholder_sif_file should be loaded from localStorage")
+	}
+	if !strings.Contains(js, "sessionStorage.getItem(SENSITIVE_TOKEN_KEY)") {
+		t.Error("slurmtack_token should be loaded from sessionStorage")
+	}
+}
+
+func TestDashboardJS_SilentTokenRenewal(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	required := []string{
+		"exchangeToken",
+		"authFetch",
+		"/v1/auth/login",
+		"handleAuthFailure",
+		"renewingToken",
+	}
+	for _, s := range required {
+		if !strings.Contains(js, s) {
+			t.Errorf("dashboard JS missing silent token renewal component: %s", s)
+		}
+	}
+
+	if !strings.Contains(js, "Your Slurm Token has expired") {
+		t.Error("dashboard JS should show expiry message on auth failure")
+	}
+	if !strings.Contains(js, "panel.classList.add('open')") {
+		t.Error("dashboard JS should open settings panel on auth failure")
 	}
 }
 
@@ -363,6 +417,111 @@ func TestDashboardJS_JWTDecodeDerivedUser(t *testing.T) {
 	}
 	if !strings.Contains(js, "payload.sun || payload.username || payload.preferred_username || payload.sub") {
 		t.Error("decodeSlurmUser should use documented claim precedence: sun, username, preferred_username, sub")
+	}
+}
+
+func TestDashboardJS_DashboardSettingsFetch(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "/v1/dashboard/settings") {
+		t.Error("dashboard JS should fetch /v1/dashboard/settings for SIF path metadata")
+	}
+	if !strings.Contains(js, "loadDashboardSettings") {
+		t.Error("dashboard JS should define loadDashboardSettings")
+	}
+	if !strings.Contains(js, "slurmSifPath") {
+		t.Error("dashboard JS state should include slurmSifPath")
+	}
+	if !strings.Contains(js, "slurmSifPathConfigured") {
+		t.Error("dashboard JS state should include slurmSifPathConfigured")
+	}
+}
+
+func TestDashboardJS_SifLocationHintComputation(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "computeExpectedSifLocation") {
+		t.Error("dashboard JS should define computeExpectedSifLocation")
+	}
+	if !strings.Contains(js, `'/home/' + user + '/' + sifPath + '/' + sifFile`) {
+		t.Error("dashboard JS should assemble expected SIF path as /home/<user>/<sifPath>/<sifFile>")
+	}
+}
+
+func TestDashboardJS_SifLocationHintGuidanceStates(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "token-derived workload user is required") {
+		t.Error("dashboard JS should show guidance when workload user is unresolvable from token")
+	}
+	if !strings.Contains(js, "daemon SLURM_SIF_PATH configuration is required") {
+		t.Error("dashboard JS should show guidance when daemon SLURM_SIF_PATH is not configured")
+	}
+	if !strings.Contains(js, "slurm-sif-location-hint") {
+		t.Error("dashboard JS should reference slurm-sif-location-hint element")
+	}
+}
+
+func TestDashboardHTML_SifLocationHintElement(t *testing.T) {
+	htmlPath := "../../docker/nginx/html/index.html"
+	content, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("reading dashboard HTML: %v", err)
+	}
+	html := string(content)
+
+	if !strings.Contains(html, `id="slurm-sif-location-hint"`) {
+		t.Error("dashboard HTML should contain slurm-sif-location-hint element")
+	}
+	if !strings.Contains(html, `sif-location-hint`) {
+		t.Error("dashboard HTML should define sif-location-hint CSS class")
+	}
+}
+
+func TestDashboardJS_LoadDashboardSettingsCalledOnInit(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	// loadDashboardSettings must be called inside the init block (after token is available)
+	initIdx := strings.Index(js, "async function init()")
+	if initIdx < 0 {
+		t.Fatal("dashboard JS should have an init function")
+	}
+	callIdx := strings.Index(js[initIdx:], "loadDashboardSettings()")
+	if callIdx < 0 {
+		t.Error("dashboard JS init should call loadDashboardSettings()")
+	}
+}
+
+func TestDashboardJS_SifInputTriggersHintRecompute(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "onSlurmSifInput") {
+		t.Error("dashboard JS should define onSlurmSifInput to recompute hint on filename change")
 	}
 }
 

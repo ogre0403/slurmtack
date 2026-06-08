@@ -55,6 +55,8 @@ func (f *fakeSlurmCancelClient) ListPartitions(_ context.Context) ([]slurm.Parti
 	return nil, nil
 }
 
+func (f *fakeSlurmCancelClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
+
 func newCancellingExec(direction domain.SwitchDirection, sourceState domain.SwitchState, jobID string) *domain.Execution {
 	return &domain.Execution{
 		ID:                      "cancel-exec-1",

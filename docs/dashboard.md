@@ -33,7 +33,7 @@ The dashboard requires a complete Slurm job settings profile before it allows `s
 
 | Field | Description |
 |-------|-------------|
-| Slurm User Token | A JWT issued by the Slurm authentication system. Stored in browser `localStorage`. |
+| Slurm User Token | A JWT issued by the Slurm authentication system. Stored in browser `sessionStorage`. |
 | Slurm Account | The Slurm account string (e.g. `proj-123`) used for placeholder job submission. |
 | Placeholder SIF Filename | The container image filename (e.g. `placeholder-agent-debug.sif`) for the placeholder job. |
 
@@ -43,9 +43,45 @@ The dashboard decodes the JWT payload (without signature verification) and extra
 
 If the token cannot be decoded or no supported claim is present, the settings are treated as incomplete.
 
+### Expected SIF Location Hint
+
+The settings panel shows a read-only **Expected SIF Location** hint assembled from three inputs:
+
+- The derived workload username (from the JWT)
+- The daemon's configured `SLURM_SIF_PATH` (fetched from `GET /v1/dashboard/settings` on startup)
+- The placeholder SIF filename entered in the settings form
+
+When all three are available, the dashboard displays the resolved path as:
+
+```
+/home/<derived-workload-user>/<SLURM_SIF_PATH>/<placeholder_sif_file>
+```
+
+For example, if the token resolves to `alice`, `SLURM_SIF_PATH=slurmtack/build/output`, and the filename is `placeholder-agent-debug.sif`, the hint reads:
+
+```
+/home/alice/slurmtack/build/output/placeholder-agent-debug.sif
+```
+
+This is the path where the SIF file **must exist** on the workload host before a `slurm_to_openstack` switch can succeed. The hint is guidance derived from daemon configuration — it does not verify that the file actually exists on disk.
+
+When the path cannot be resolved, the hint shows explicit guidance:
+
+- **No token or unresolvable user** — prompts the operator to enter a valid Slurm token so the workload user can be derived.
+- **Daemon `SLURM_SIF_PATH` not configured** — indicates that the daemon-side `SLURM_SIF_PATH` environment variable must be set before the full path can be shown.
+- **No SIF filename entered** — prompts the operator to fill in the placeholder SIF filename.
+
+The hint recomputes live whenever the token or filename fields change. It reflects daemon configuration loaded at page startup; a page reload is required to pick up daemon config changes.
+
 ### Browser Storage
 
-Slurm job settings are persisted in browser `localStorage` under the key `slurmtack_slurm_settings`. They survive page reloads and browser restarts. Use the **Clear** button in the settings panel to remove them.
+| Value | Storage |
+|-------|---------|
+| `slurm_user_token` | `sessionStorage` — cleared when the browser tab closes |
+| `slurm_account` | `localStorage` — survives page reloads and restarts |
+| `placeholder_sif_file` | `localStorage` — survives page reloads and restarts |
+
+Use the **Clear** button in the settings panel to remove all stored values.
 
 ### Incomplete Settings Blocking
 
@@ -58,6 +94,26 @@ When the Slurm job settings are incomplete (missing token, undecodable username,
 - **Cancel**: Available on node cards with an active execution. Submits `POST /v1/switches/:id/cancel`.
 
 ## New Read Endpoints
+
+### GET /v1/dashboard/settings
+
+Returns daemon configuration metadata needed by the dashboard settings UI. Requires authentication.
+
+Response:
+
+```json
+{
+  "slurm_sif_path_configured": true,
+  "slurm_sif_path": "slurmtack/build/output"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `slurm_sif_path_configured` | boolean | `true` if `SLURM_SIF_PATH` is set in daemon config, `false` otherwise |
+| `slurm_sif_path` | string | The configured home-relative path segment, or empty string when not configured |
+
+Always returns HTTP 200 so the dashboard can distinguish "path unavailable" from transport failure. Does not expose workload credentials, derived usernames, or expanded absolute paths.
 
 ### GET /v1/dashboard/inventory
 

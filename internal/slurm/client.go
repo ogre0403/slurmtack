@@ -42,4 +42,5 @@ type Client interface {
 	CancelJob(ctx context.Context, jobID string) error
 	CancelJobWithIdentity(ctx context.Context, jobID string, id WorkloadIdentity) error
 	ListPartitions(ctx context.Context) ([]Partition, error)
+	VerifyToken(ctx context.Context, user, token string) error
 }

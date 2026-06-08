@@ -7,8 +7,51 @@ import (
 	"testing"
 )
 
+func TestLoadReadsSlurmSIFEnvVars(t *testing.T) {
+	t.Setenv("SLURM_SIF_PATH", "slurmtack/build/output")
+	t.Setenv("SLURM_SIF_FILE", "placeholder-agent.sif")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.PlaceholderSIFPath != "slurmtack/build/output" {
+		t.Fatalf("PlaceholderSIFPath = %q, want slurmtack/build/output", cfg.PlaceholderSIFPath)
+	}
+	if cfg.PlaceholderSIFFile != "placeholder-agent.sif" {
+		t.Fatalf("PlaceholderSIFFile = %q, want placeholder-agent.sif", cfg.PlaceholderSIFFile)
+	}
+}
+
+func TestLoadRejectsAbsoluteSlurmSIFPath(t *testing.T) {
+	t.Setenv("SLURM_SIF_PATH", "/shared/images")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want absolute path error")
+	}
+	if !strings.Contains(err.Error(), "SLURM_SIF_PATH") {
+		t.Fatalf("Load() error = %q, want SLURM_SIF_PATH in message", err)
+	}
+	if !strings.Contains(err.Error(), "home-relative") {
+		t.Fatalf("Load() error = %q, want home-relative in message", err)
+	}
+}
+
+func TestLoadRejectsTraversalSlurmSIFPath(t *testing.T) {
+	t.Setenv("SLURM_SIF_PATH", "../images")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want traversal path error")
+	}
+	if !strings.Contains(err.Error(), "SLURM_SIF_PATH") {
+		t.Fatalf("Load() error = %q, want SLURM_SIF_PATH in message", err)
+	}
+}
+
 func TestLoadWithSSHRunnerConfig(t *testing.T) {
-	t.Setenv("API_TOKEN", "token")
+
 	t.Setenv("SSH_USER", "slurm")
 	t.Setenv("SSH_PORT", "2222")
 	t.Setenv("SSH_OPTIONS", "StrictHostKeyChecking=accept-new")
@@ -33,7 +76,7 @@ func TestLoadWithSSHRunnerConfig(t *testing.T) {
 }
 
 func TestLoadRejectsSSHRunnerConfigWithoutPrivateKey(t *testing.T) {
-	t.Setenv("API_TOKEN", "token")
+
 	t.Setenv("SSH_USER", "slurm")
 
 	_, err := Load()
@@ -46,7 +89,7 @@ func TestLoadRejectsSSHRunnerConfigWithoutPrivateKey(t *testing.T) {
 }
 
 func TestLoadRejectsUnreadableSSHPrivateKeyPath(t *testing.T) {
-	t.Setenv("API_TOKEN", "token")
+
 	t.Setenv("SSH_PRIVATE_KEY_PATH", filepath.Join(t.TempDir(), "missing-key"))
 
 	_, err := Load()

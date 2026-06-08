@@ -45,6 +45,8 @@ func (c *captureAttachClient) ListPartitions(_ context.Context) ([]Partition, er
 	return nil, nil
 }
 
+func (c *captureAttachClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
+
 func TestAttachHandlerExecuteGuardedResume(t *testing.T) {
 	exec := &domain.Execution{NodeName: "gpu-node-01"}
 	tests := []struct {

@@ -28,7 +28,7 @@ if command -v singularity &>/dev/null; then
   echo ""
   echo "==> Deployment:"
   echo "    Copy the SIF to a shared filesystem path accessible by all GPU nodes."
-  echo "    Set PLACEHOLDER_SIF_PATH in the daemon config to point to the SIF location."
+  echo "    Set SLURM_SIF_PATH in the daemon config to point to the SIF location."
   echo "    Example: /shared/images/placeholder-agent.sif"
 else
   echo ""

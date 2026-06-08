@@ -3,18 +3,21 @@
 
   var PAGE_SIZE = 10;
 
-  var SLURM_SETTINGS_KEY = 'slurmtack_slurm_settings';
+  var SENSITIVE_TOKEN_KEY = 'slurmtack_token';
+  var SLURM_TOKEN_KEY = 'slurmtack_slurm_user_token';
+  var SLURM_ACCOUNT_KEY = 'slurmtack_slurm_account';
+  var SLURM_SIF_KEY = 'slurmtack_placeholder_sif_file';
 
   function loadSlurmSettingsFromStorage() {
-    try {
-      var raw = localStorage.getItem(SLURM_SETTINGS_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch (e) { /* ignore corrupt data */ }
-    return { slurm_user_token: '', slurm_account: '', placeholder_sif_file: '' };
+    return {
+      slurm_user_token: sessionStorage.getItem(SLURM_TOKEN_KEY) || '',
+      slurm_account: localStorage.getItem(SLURM_ACCOUNT_KEY) || '',
+      placeholder_sif_file: localStorage.getItem(SLURM_SIF_KEY) || ''
+    };
   }
 
   var state = {
-    token: localStorage.getItem('slurmtack_token') || '',
+    token: sessionStorage.getItem(SENSITIVE_TOKEN_KEY) || '',
     partitions: [],
     nodes: [],
     selectedPartition: null,
@@ -24,13 +27,74 @@
     execHasMore: false,
     selectedExecutionId: null,
     slurmSettings: loadSlurmSettingsFromStorage(),
-    slurmDerivedUser: ''
+    slurmDerivedUser: '',
+    slurmSifPath: '',
+    slurmSifPathConfigured: false,
+    renewingToken: null
   };
 
   function authHeaders() {
     var h = { 'Content-Type': 'application/json' };
     if (state.token) h['Authorization'] = 'Bearer ' + state.token;
     return h;
+  }
+
+  async function exchangeToken() {
+    var slurmToken = state.slurmSettings.slurm_user_token;
+    var slurmUser = decodeSlurmUser(slurmToken);
+    if (!slurmToken || !slurmUser) return null;
+
+    var res = await fetch('/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slurm_user: slurmUser, slurm_user_token: slurmToken })
+    });
+    if (!res.ok) return null;
+    var data = await res.json();
+    return data.slurmtack_token || null;
+  }
+
+  async function authFetch(url, opts) {
+    opts = opts || {};
+    if (!opts.headers) opts.headers = authHeaders();
+    var res = await fetch(url, opts);
+    if (res.status !== 401) return res;
+
+    var slurmToken = state.slurmSettings.slurm_user_token;
+    if (!slurmToken) return res;
+
+    if (!state.renewingToken) {
+      state.renewingToken = exchangeToken().then(function (newToken) {
+        state.renewingToken = null;
+        return newToken;
+      }).catch(function () {
+        state.renewingToken = null;
+        return null;
+      });
+    }
+
+    var newToken = await state.renewingToken;
+    if (!newToken) {
+      handleAuthFailure();
+      return res;
+    }
+
+    state.token = newToken;
+    sessionStorage.setItem(SENSITIVE_TOKEN_KEY, newToken);
+    opts.headers = authHeaders();
+    return fetch(url, opts);
+  }
+
+  function handleAuthFailure() {
+    state.token = '';
+    sessionStorage.removeItem(SENSITIVE_TOKEN_KEY);
+    sessionStorage.removeItem(SLURM_TOKEN_KEY);
+    state.slurmSettings.slurm_user_token = '';
+    state.slurmDerivedUser = '';
+    showError('Your Slurm Token has expired. Please re-enter it.');
+    var panel = document.getElementById('slurm-settings-panel');
+    if (panel) panel.classList.add('open');
+    updateSlurmSettingsUI();
   }
 
   function showError(msg) {
@@ -62,12 +126,32 @@
     }
   }
 
+  // Dashboard settings metadata
+  async function loadDashboardSettings() {
+    try {
+      var res = await authFetch('/v1/dashboard/settings', { headers: authHeaders() });
+      if (!res.ok) return;
+      var data = await res.json();
+      state.slurmSifPathConfigured = data.slurm_sif_path_configured || false;
+      state.slurmSifPath = data.slurm_sif_path || '';
+      updateSlurmSettingsUI();
+    } catch (e) { /* silent — hint will show missing-config guidance */ }
+  }
+
+  function computeExpectedSifLocation() {
+    var user = state.slurmDerivedUser;
+    var sifPath = state.slurmSifPath;
+    var sifFile = state.slurmSettings.placeholder_sif_file;
+    if (!user || !sifPath || !sifFile) return '';
+    return '/home/' + user + '/' + sifPath + '/' + sifFile;
+  }
+
   // Inventory
   async function loadInventory(partition) {
     var url = '/v1/dashboard/inventory';
     if (partition) url += '?partition=' + encodeURIComponent(partition);
     try {
-      var res = await fetch(url, { headers: authHeaders() });
+      var res = await authFetch(url, { headers: authHeaders() });
       if (!res.ok) {
         showError('Failed to load inventory (HTTP ' + res.status + ')');
         hideLoading();
@@ -178,7 +262,7 @@
 
   function buildNodeActions(node) {
     if (node.switch && node.switch.active_execution_id) {
-      return '<button class="danger" onclick="cancelExecution(\'' + escapeAttr(node.switch.active_execution_id) + '\')">Cancel</button>';
+      return '';
     }
     if (node.available_direction === 'openstack_to_slurm') {
       var disabledAttr = !state.slurmDerivedUser ? ' disabled' : '';
@@ -199,7 +283,7 @@
     if (cursor) url += '&before=' + encodeURIComponent(cursor);
 
     try {
-      var res = await fetch(url, { headers: authHeaders() });
+      var res = await authFetch(url, { headers: authHeaders() });
       if (!res.ok) return;
       var data = await res.json();
       state.executions = data;
@@ -262,8 +346,8 @@
 
     try {
       var [execRes, stepsRes] = await Promise.all([
-        fetch('/v1/switches/' + encodeURIComponent(id), { headers: authHeaders() }),
-        fetch('/v1/switches/' + encodeURIComponent(id) + '/steps', { headers: authHeaders() })
+        authFetch('/v1/switches/' + encodeURIComponent(id), { headers: authHeaders() }),
+        authFetch('/v1/switches/' + encodeURIComponent(id) + '/steps', { headers: authHeaders() })
       ]);
       var exec = await execRes.json();
       var steps = await stepsRes.json();
@@ -312,7 +396,7 @@
 
     try {
       var body = { direction: direction, node_name: nodeName, requested_by: requestedBy };
-      var res = await fetch('/v1/switches', { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+      var res = await authFetch('/v1/switches', { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
       if (!res.ok) {
         var err = await res.json().catch(function () { return {}; });
         alert('Switch failed: ' + (err.error || res.status));
@@ -351,7 +435,7 @@
         slurm_user_token: state.slurmSettings.slurm_user_token
       };
       if (state.selectedPartition) body.slurm_partition = state.selectedPartition;
-      var res = await fetch('/v1/switches', { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+      var res = await authFetch('/v1/switches', { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
       if (!res.ok) {
         var err = await res.json().catch(function () { return {}; });
         alert('Switch failed: ' + (err.error || res.status));
@@ -369,7 +453,7 @@
   window.cancelExecution = async function (id) {
     if (!confirm('Cancel execution ' + id + '?')) return;
     try {
-      var res = await fetch('/v1/switches/' + encodeURIComponent(id) + '/cancel', { method: 'POST', headers: authHeaders() });
+      var res = await authFetch('/v1/switches/' + encodeURIComponent(id) + '/cancel', { method: 'POST', headers: authHeaders() });
       if (!res.ok) {
         var err = await res.json().catch(function () { return {}; });
         alert('Cancel failed: ' + (err.error || res.status));
@@ -403,12 +487,21 @@
     } catch (e) { return iso; }
   }
 
-  // Token prompt
-  function ensureToken() {
-    if (!state.token) {
-      state.token = prompt('Enter API token:', '') || '';
-      if (state.token) localStorage.setItem('slurmtack_token', state.token);
+  async function ensureToken() {
+    if (state.token) return;
+
+    if (state.slurmSettings.slurm_user_token) {
+      var newToken = await exchangeToken();
+      if (newToken) {
+        state.token = newToken;
+        sessionStorage.setItem(SENSITIVE_TOKEN_KEY, newToken);
+        return;
+      }
     }
+
+    showError('Authentication required. Please configure your Slurm token in settings.');
+    var panel = document.getElementById('slurm-settings-panel');
+    if (panel) panel.classList.add('open');
   }
 
   // Slurm job settings
@@ -439,6 +532,29 @@
     state.slurmDerivedUser = decodeSlurmUser(state.slurmSettings.slurm_user_token);
     var userEl = document.getElementById('slurm-derived-user');
     if (userEl) userEl.textContent = state.slurmDerivedUser || '—';
+
+    var hintEl = document.getElementById('slurm-sif-location-hint');
+    if (hintEl) {
+      var location = computeExpectedSifLocation();
+      if (location) {
+        hintEl.textContent = location;
+        hintEl.className = 'sif-location-hint';
+      } else {
+        hintEl.className = 'sif-location-hint missing';
+        if (!state.slurmDerivedUser && state.slurmSettings.slurm_user_token) {
+          hintEl.textContent = 'A valid token-derived workload user is required before the home path can be resolved.';
+        } else if (!state.slurmDerivedUser) {
+          hintEl.textContent = 'Enter a valid Slurm token to resolve the workload user.';
+        } else if (!state.slurmSifPathConfigured) {
+          hintEl.textContent = 'The daemon SLURM_SIF_PATH configuration is required to determine the expected SIF location.';
+        } else if (!state.slurmSettings.placeholder_sif_file) {
+          hintEl.textContent = 'Enter a placeholder SIF filename to see the expected location.';
+        } else {
+          hintEl.textContent = '—';
+        }
+      }
+    }
+
     var validationEl = document.getElementById('slurm-settings-validation');
     if (validationEl) validationEl.textContent = getSlurmSettingsValidation();
     var btn = document.getElementById('slurm-settings-btn');
@@ -467,25 +583,51 @@
 
   window.onSlurmTokenInput = function () {
     state.slurmSettings.slurm_user_token = document.getElementById('slurm-token-input').value.trim();
+    state.slurmDerivedUser = decodeSlurmUser(state.slurmSettings.slurm_user_token);
     updateSlurmSettingsUI();
   };
 
-  window.saveSlurmSettings = function () {
+  window.onSlurmSifInput = function () {
+    state.slurmSettings.placeholder_sif_file = document.getElementById('slurm-sif-input').value.trim();
+    updateSlurmSettingsUI();
+  };
+
+  window.saveSlurmSettings = async function () {
     state.slurmSettings.slurm_user_token = document.getElementById('slurm-token-input').value.trim();
     state.slurmSettings.slurm_account = document.getElementById('slurm-account-input').value.trim();
     state.slurmSettings.placeholder_sif_file = document.getElementById('slurm-sif-input').value.trim();
     state.slurmDerivedUser = decodeSlurmUser(state.slurmSettings.slurm_user_token);
-    localStorage.setItem(SLURM_SETTINGS_KEY, JSON.stringify(state.slurmSettings));
+    sessionStorage.setItem(SLURM_TOKEN_KEY, state.slurmSettings.slurm_user_token);
+    localStorage.setItem(SLURM_ACCOUNT_KEY, state.slurmSettings.slurm_account);
+    localStorage.setItem(SLURM_SIF_KEY, state.slurmSettings.placeholder_sif_file);
     updateSlurmSettingsUI();
-    if (isSlurmSettingsComplete()) {
+
+    if (state.slurmSettings.slurm_user_token && !state.token) {
+      var newToken = await exchangeToken();
+      if (newToken) {
+        state.token = newToken;
+        sessionStorage.setItem(SENSITIVE_TOKEN_KEY, newToken);
+        showError('');
+      } else {
+        showError('Token exchange failed. Your Slurm token may be invalid or expired.');
+      }
+    }
+
+    if (isSlurmSettingsComplete() && state.token) {
       document.getElementById('slurm-settings-panel').classList.remove('open');
+      loadInventory(state.selectedPartition);
+      loadExecutions(0);
     }
   };
 
   window.clearSlurmSettings = function () {
     state.slurmSettings = { slurm_user_token: '', slurm_account: '', placeholder_sif_file: '' };
     state.slurmDerivedUser = '';
-    localStorage.removeItem(SLURM_SETTINGS_KEY);
+    state.token = '';
+    sessionStorage.removeItem(SENSITIVE_TOKEN_KEY);
+    sessionStorage.removeItem(SLURM_TOKEN_KEY);
+    localStorage.removeItem(SLURM_ACCOUNT_KEY);
+    localStorage.removeItem(SLURM_SIF_KEY);
     document.getElementById('slurm-token-input').value = '';
     document.getElementById('slurm-account-input').value = '';
     document.getElementById('slurm-sif-input').value = '';
@@ -505,14 +647,21 @@
   };
 
   // Init
-  ensureToken();
-  updateSlurmSettingsUI();
-  checkHealth();
-  loadInventory(null);
-  loadExecutions(0);
+  (async function init() {
+    await ensureToken();
+    updateSlurmSettingsUI();
+    checkHealth();
+    if (state.token) {
+      loadDashboardSettings();
+      loadInventory(null);
+      loadExecutions(0);
+    } else {
+      hideLoading();
+    }
+  })();
 
   // Periodic refresh
   setInterval(checkHealth, 30000);
-  setInterval(function () { loadInventory(state.selectedPartition); }, 30000);
-  setInterval(function () { loadExecutions(state.execPage); }, 30000);
+  setInterval(function () { if (state.token) loadInventory(state.selectedPartition); }, 30000);
+  setInterval(function () { if (state.token) loadExecutions(state.execPage); }, 30000);
 })();

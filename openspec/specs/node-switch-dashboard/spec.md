@@ -29,28 +29,68 @@ The dashboard SHALL display a status card or row for each discovered node that i
 - **THEN** the dashboard renders that classification distinctly instead of implying ownership by either Slurm or OpenStack
 
 ### Requirement: Configure Slurm job settings for dashboard-triggered placeholder submission
-The dashboard SHALL expose a Slurm job settings control in the top-right header area. That settings UI MUST let the operator edit `slurm_user_token`, `slurm_account`, and `placeholder_sif_file`; MUST derive one effective Slurm workload username from the JWT payload using a deterministic supported-claim precedence; MUST show the derived username as read-only feedback instead of asking the operator to type it; and MUST persist the editable settings in browser storage so they survive page reloads. The dashboard MUST treat `slurm_user_token`, the derived workload username, `slurm_account`, and `placeholder_sif_file` as the complete required settings profile for dashboard-triggered `slurm_to_openstack`. If any part of that profile is missing, malformed, or undecodable, the dashboard MUST show a validation error and MUST NOT allow the `slurm_to_openstack` action to proceed.
+The dashboard SHALL expose a Slurm job settings control in the top-right header area. That settings UI MUST let the operator edit `slurm_user_token`, `slurm_account`, and `placeholder_sif_file`; MUST derive one effective Slurm workload username from the JWT payload using a deterministic supported-claim precedence; MUST show the derived username as read-only feedback instead of asking the operator to type it; MUST fetch safe dashboard metadata for the configured home-relative `SLURM_SIF_PATH`; and MUST render a read-only expected SIF location hint as `/home/<derived-workload-user>/<SLURM_SIF_PATH>/<placeholder_sif_file>` whenever those inputs are all available. To prevent credential leakage, the sensitive `slurm_user_token` MUST be stored in `sessionStorage`, whereas `slurm_account` and `placeholder_sif_file` MUST be stored in `localStorage`. The dashboard MUST treat `slurm_user_token`, the derived workload username, `slurm_account`, and `placeholder_sif_file` as the complete required settings profile for dashboard-triggered `slurm_to_openstack`. If any part of that profile is missing, malformed, or undecodable, the dashboard MUST show a validation error and MUST NOT allow the `slurm_to_openstack` action to proceed. If the expected SIF location cannot be resolved because the token-derived user is unavailable, the SIF filename is blank, or the daemon has no usable `SLURM_SIF_PATH` metadata, the dashboard MUST show operator-visible guidance describing which input or config is missing.
 
-#### Scenario: Save settings and show derived workload user
+#### Scenario: Save settings and show derived workload user with expected SIF location
 - **WHEN** the operator opens the header settings UI and enters a Slurm JWT whose payload resolves to workload user `alice`, plus `slurm_account=proj-123` and `placeholder_sif_file=placeholder-agent-debug.sif`
-- **THEN** the dashboard stores those editable values in browser storage
+- **AND** the dashboard metadata reports `SLURM_SIF_PATH=slurmtack/build/output`
+- **THEN** the dashboard stores `slurm_user_token` in `sessionStorage` and other values in `localStorage`
 - **AND** the settings UI shows `alice` as the derived read-only workload user
+- **AND** the settings UI shows `/home/alice/slurmtack/build/output/placeholder-agent-debug.sif` as the expected SIF location
 
-#### Scenario: Restore settings after page reload
+#### Scenario: Restore settings after page reload with expected SIF location
 - **WHEN** the operator previously saved Slurm job settings in the dashboard
-- **AND** the dashboard page is reloaded
-- **THEN** the settings UI restores the saved token, account, and placeholder SIF filename from browser storage
+- **AND** the dashboard page is reloaded (F5)
+- **AND** the dashboard metadata reports `SLURM_SIF_PATH=slurmtack/build/output`
+- **THEN** the settings UI restores the saved token from `sessionStorage` and other settings from `localStorage`
 - **AND** the dashboard recomputes and displays the derived workload user from the restored token
+- **AND** the dashboard recomputes and displays `/home/<derived-workload-user>/slurmtack/build/output/<placeholder_sif_file>` as the expected SIF location
 
 #### Scenario: Reject unusable Slurm token in settings
 - **WHEN** the operator enters a malformed JWT or a JWT that does not contain any supported username claim
 - **THEN** the dashboard shows an operator-visible validation error for the Slurm job settings
 - **AND** the dashboard does not use that token for later `slurm_to_openstack` submission
+- **AND** the expected SIF location hint explains that a valid token-derived workload user is required before the home path can be resolved
+
+#### Scenario: Explain unresolved SIF location when daemon path metadata is unavailable
+- **WHEN** the operator has entered a valid Slurm token and `placeholder_sif_file=placeholder-agent-debug.sif`
+- **AND** the dashboard metadata indicates that `SLURM_SIF_PATH` is not configured
+- **THEN** the settings UI does not fabricate an absolute SIF path
+- **AND** it tells the operator that the daemon `SLURM_SIF_PATH` configuration is required to determine the expected SIF location
 
 #### Scenario: Reject incomplete required Slurm job settings
 - **WHEN** the operator leaves `slurm_account` or `placeholder_sif_file` empty, or no valid workload username can be derived from the configured token
 - **THEN** the dashboard marks the Slurm job settings as incomplete for `slurm_to_openstack`
 - **AND** the operator cannot execute the dashboard `slurm_to_openstack` action until the settings are completed
+
+### Requirement: Hybrid Client Storage
+The dashboard SHALL use browser storage to persist operator settings. To safeguard high-value credentials, the dashboard MUST store sensitive credentials (`slurm_user_token` and `slurmtack_token`) exclusively in `sessionStorage` (which persists across page refreshes but is cleared on tab close). The dashboard MUST store non-sensitive settings (`slurm_account` and `placeholder_sif_file`) in `localStorage` to ensure they survive across browser sessions.
+
+#### Scenario: Verify storage location of sensitive and non-sensitive fields
+- **WHEN** the operator saves the Slurm job settings in the UI
+- **THEN** the sensitive `slurm_user_token` is written to `sessionStorage` and NOT to `localStorage`
+- **AND** the non-sensitive `slurm_account` and `placeholder_sif_file` are written to `localStorage`
+
+#### Scenario: Clearing settings wipes all storage
+- **WHEN** the operator clicks the "Clear" button in the settings UI
+- **THEN** both `sessionStorage` and `localStorage` keys are cleared of the respective settings
+
+### Requirement: Silent Token Auto-Renewal
+The dashboard SHALL handle `401 Unauthorized` API responses from the slurmtack server by executing a background silent renewal. If `slurm_user_token` exists in `sessionStorage`, the dashboard MUST pause the pending request, submit a background `POST /v1/auth/login` exchange request, save the new `slurmtack_token` in `sessionStorage` on success, and transparently retry the original API request. If the background exchange fails (e.g., due to an expired Slurm token), the dashboard MUST clear the sessionStorage tokens, display an explicit authentication error banner, and display the settings panel to prompt the operator for a new Slurm token.
+
+#### Scenario: Successful silent token renewal
+- **WHEN** the dashboard sends an API request and receives a `401 Unauthorized`
+- **AND** a valid `slurm_user_token` is present in `sessionStorage`
+- **AND** the background exchange request `POST /v1/auth/login` returns HTTP 200 with a new token
+- **THEN** the dashboard saves the new token in `sessionStorage`
+- **AND** the dashboard retries and successfully completes the original API request with zero visible error to the operator
+
+#### Scenario: Unsuccessful silent token renewal forces login prompt
+- **WHEN** the dashboard sends an API request and receives a `401 Unauthorized`
+- **AND** the background exchange request `POST /v1/auth/login` fails with HTTP 401
+- **THEN** the dashboard clears the tokens from `sessionStorage`
+- **AND** the dashboard displays an error banner: "Your Slurm Token has expired. Please re-enter it."
+- **AND** the dashboard automatically opens the settings panel for token input
 
 ### Requirement: Trigger switch actions from the dashboard
 
@@ -134,3 +174,17 @@ The dashboard SHALL provide an execution-focused right-side panel with a paginat
 - **WHEN** the operator applies a filter such as `node=gpu-01` or `status=failed`
 - **THEN** the dashboard refreshes the execution list using those filters
 - **AND** it resets the paginated view to the first page of matching executions
+
+### Requirement: Bootstrap dashboard session authentication
+
+The dashboard SHALL establish API authentication through the Slurm token exchange flow instead of any shared static API token. When a stored `slurm_user_token` resolves to a workload username and no valid `slurmtack_token` is currently available, the dashboard MUST call `POST /v1/auth/login`, store the returned `slurmtack_token` in `sessionStorage`, and use that token for subsequent protected API requests. The dashboard MUST NOT prompt for, persist, or send a legacy `API_TOKEN`.
+
+#### Scenario: Stored Slurm token bootstraps a dashboard session
+- **WHEN** the operator reloads the dashboard and `sessionStorage` contains a valid `slurm_user_token` but no `slurmtack_token`
+- **THEN** the dashboard automatically exchanges the Slurm token for a new `slurmtack_token`
+- **AND** the dashboard stores the returned session token in `sessionStorage` before loading protected API data
+
+#### Scenario: Missing or invalid stored Slurm token does not fall back to API token prompt
+- **WHEN** the dashboard loads without a usable `slurm_user_token` or the startup exchange request fails
+- **THEN** the dashboard keeps the operator unauthenticated for protected API calls
+- **AND** the dashboard opens the settings panel or shows an authentication error instead of prompting for a shared API token

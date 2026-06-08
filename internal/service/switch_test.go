@@ -557,6 +557,9 @@ func TestRequestSwitchRejectsMissingPlaceholderSIFFile(t *testing.T) {
 	if !strings.Contains(err.Error(), "placeholder SIF filename is required") {
 		t.Fatalf("RequestSwitch() error = %q, want filename requirement message", err.Error())
 	}
+	if !strings.Contains(err.Error(), "SLURM_SIF_FILE") {
+		t.Fatalf("RequestSwitch() error = %q, want SLURM_SIF_FILE in operator guidance", err.Error())
+	}
 }
 
 func TestRequestSwitchRejectsMissingPlaceholderSIFPathConfig(t *testing.T) {

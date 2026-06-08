@@ -17,7 +17,9 @@ cd build
 sudo bash ./build-placeholder-agent.sh
 ```
 
-接著把 SIF 複製到每個 workload user 的 home 目錄下相同的相對路徑，例如 `/home/alice/slurmtack/build/output/placeholder-agent.sif`。設定 `PLACEHOLDER_SIF_PATH` 為該 home-relative 目錄（如 `slurmtack/build/output`），`PLACEHOLDER_SIF_FILE` 為預設檔名（如 `placeholder-agent.sif`）。每次 request 可透過 `placeholder_sif_file` 欄位覆蓋檔名。
+接著把 SIF 複製到每個 workload user 的 home 目錄下相同的相對路徑，例如 `/home/alice/slurmtack/build/output/placeholder-agent.sif`。設定 `SLURM_SIF_PATH` 為該 home-relative 目錄（如 `slurmtack/build/output`），`SLURM_SIF_FILE` 為預設檔名（如 `placeholder-agent.sif`）。每次 request 可透過 `placeholder_sif_file` 欄位覆蓋檔名。
+
+> **Migration note:** `PLACEHOLDER_SIF_PATH` and `PLACEHOLDER_SIF_FILE` have been renamed to `SLURM_SIF_PATH` and `SLURM_SIF_FILE`. Rename these two variables in your deployment configuration before restarting the daemon.
 
 
 ### Available Environment Variables
@@ -25,9 +27,9 @@ sudo bash ./build-placeholder-agent.sh
 目前程式會讀取這些設定:
 
 1. Daemon 本身：
-- `API_TOKEN`
 - `LISTEN_ADDR`
 - `DB_PATH`: 是 daemon 目前行環境中的路徑，用來存放DB資料；若daemon 跑在容器內，對應到已掛載進容器的路徑。
+- `JWT_SIGNING_KEY`（選填）: 用於簽發 Web Session JWT。若未設定，daemon 啟動時會自動產生隨機 key（重啟後現有 session 會失效）。
 
 2. MQ相關：
 - `AMQP_URL`
@@ -38,8 +40,8 @@ sudo bash ./build-placeholder-agent.sh
 - `SLURM_API_USER`: 送出 job 的 Slurm 使用者（預設 `cloud-user`）
 - `SLURM_ADMIN_USER`: drain/resume 操作使用的管理員帳號（預設同 `SLURM_API_USER`）
 - `SLURM_ADMIN_JWT_TOKEN`: 管理員操作使用的 JWT（預設同 `SLURM_JWT_TOKEN`）
-- `PLACEHOLDER_SIF_PATH`: Home-relative 目錄路徑（不能是絕對路徑或含 `..`）。Runtime 解析為 `/home/<workload-user>/<PLACEHOLDER_SIF_PATH>/<effective-file>`。
-- `PLACEHOLDER_SIF_FILE`: 預設 SIF 檔名。若 request 未提供 `placeholder_sif_file` 則使用此值。
+- `SLURM_SIF_PATH`: Home-relative 目錄路徑（不能是絕對路徑或含 `..`）。Runtime 解析為 `/home/<workload-user>/<SLURM_SIF_PATH>/<effective-file>`。
+- `SLURM_SIF_FILE`: 預設 SIF 檔名。若 request 未提供 `placeholder_sif_file` 則使用此值。
 
 4. OpenStack 相關：
 - `OS_AUTH_URL`
@@ -84,12 +86,27 @@ sudo bash ./build-placeholder-agent.sh
 - 若有指定 `slurm_account`，placeholder job 的 `job.account` 會設為該值。
 - Placeholder script 會 export 使用的 `SLURM_API_USER` 和 `SLURM_JWT_TOKEN`。
 
+**認證流程：** 所有 protected `/v1/*` endpoint 需要 slurmtack-issued Web Session JWT。先透過 `POST /v1/auth/login` 用 Slurm token 換取 session token，再用該 token 呼叫 API。
+
+```shell
+# Step 1: 取得 session token（用 Slurm JWT 交換）
+TOKEN=$(
+curl -s -X POST http://localhost/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "slurm_user": "alice",
+    "slurm_user_token": "'"$SLURM_JWT"'"
+  }' | jq -r '.slurmtack_token'
+)
+```
+
 基本範例（使用 daemon 預設身分）：
 
 ```shell
+# Step 2: 用 session token 呼叫 API
 EXEC_ID=$(
 curl -X POST http://localhost/v1/switches \
-  -H "Authorization: Bearer changeme" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "direction": "slurm_to_openstack",
@@ -98,7 +115,7 @@ curl -X POST http://localhost/v1/switches \
   }' | jq -r '.execution_id'
 )
 
-curl -s -H 'Authorization: Bearer changeme' \
+curl -s -H "Authorization: Bearer $TOKEN" \
   "http://localhost/v1/switches/$EXEC_ID" | jq .
 ```
 
@@ -107,7 +124,7 @@ curl -s -H 'Authorization: Bearer changeme' \
 ```shell
 EXEC_ID=$(
 curl -X POST http://localhost/v1/switches \
-  -H "Authorization: Bearer changeme" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "direction": "slurm_to_openstack",
@@ -115,11 +132,11 @@ curl -X POST http://localhost/v1/switches \
     "slurm_partition": "gpu-maint",
     "slurm_account": "proj-123",
     "slurm_user": "alice",
-    "slurm_user_token": "'"$JWT_TOKEN"'"
+    "slurm_user_token": "'"$SLURM_JWT"'"
   }' | jq -r '.execution_id'
 )
 
-curl -s -H 'Authorization: Bearer changeme' \
+curl -s -H "Authorization: Bearer $TOKEN" \
   "http://localhost/v1/switches/$EXEC_ID" | jq .
 ```
 
@@ -133,7 +150,7 @@ GET response 會包含 `requested_slurm_account`（不會暴露 workload credent
 ```shell
 EXEC_ID=$(
   curl -s -X POST http://localhost/v1/switches \
-    -H 'Authorization: Bearer changeme' \
+    -H "Authorization: Bearer $TOKEN" \
     -H 'Content-Type: application/json' \
     -d '{
       "direction": "openstack_to_slurm",
@@ -142,9 +159,8 @@ EXEC_ID=$(
     }' | jq -r '.execution_id'
 )
 
-curl -s -H 'Authorization: Bearer changeme' \
+curl -s -H "Authorization: Bearer $TOKEN" \
   "http://localhost/v1/switches/$EXEC_ID" | jq .
-
 ```
 
 
@@ -161,13 +177,13 @@ curl -s -H 'Authorization: Bearer changeme' \
 
 
 ```shell
-curl -X POST http://localhost/v1/switches/$EXEC_ID/cancel -H "Authorization: Bearer changeme"
+curl -X POST http://localhost/v1/switches/$EXEC_ID/cancel -H "Authorization: Bearer $TOKEN"
 ```
 
 ### List all switch
 
 ```shell
-curl http://localhost/v1/switches -H "Authorization: Bearer changeme"
+curl http://localhost/v1/switches -H "Authorization: Bearer $TOKEN"
 ```
 
 

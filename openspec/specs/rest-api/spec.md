@@ -1,8 +1,66 @@
-## MODIFIED Requirements
+## Requirements
+
+### Requirement: Slurm Token Exchange
+The system SHALL expose a `POST /v1/auth/login` endpoint that accepts a `slurm_user` and `slurm_user_token`. The system MUST validate the provided `slurm_user_token` against the configured Slurm REST API. To prevent credential spoofing, the system MUST decode the Slurm JWT locally and verify that the `sub` claim (or equivalent username claim) matches the provided `slurm_user`. If the token is valid and matches the user, the system SHALL return a short-lived slurmtack-signed Web Session JWT expiring in 1 hour.
+
+#### Scenario: Successful Slurm Token Exchange
+- **WHEN** client sends `POST /v1/auth/login` with `{"slurm_user": "alice", "slurm_user_token": "<valid-slurm-token>"}`
+- **AND** the token validates successfully against the Slurm REST API and its `sub` claim matches `alice`
+- **THEN** the system returns HTTP 200 with body `{"slurmtack_token": "<signed-jwt>"}`
+
+#### Scenario: Rejected Slurm Token Exchange due to validation failure
+- **WHEN** client sends `POST /v1/auth/login` with `{"slurm_user": "alice", "slurm_user_token": "<invalid-token>"}`
+- **AND** the Slurm REST API returns an error or unauthorized status
+- **THEN** the system returns HTTP 401 with body `{"error": "invalid slurm token"}`
+
+#### Scenario: Rejected Slurm Token Exchange due to username mismatch
+- **WHEN** client sends `POST /v1/auth/login` with `{"slurm_user": "bob", "slurm_user_token": "<valid-token-for-alice>"}`
+- **THEN** the system returns HTTP 401 with body `{"error": "username mismatch"}`
+
+### Requirement: Web Session Token Authentication
+The system SHALL protect all `/v1/*` endpoints (except `/health` and `/v1/auth/login`) using the dynamic Web Session JWT. The authentication middleware MUST verify the signature, validity, and expiration of the JWT. If the token is valid, the middleware MUST extract the `sub` claim and bind it to the request context as the authenticated user. The middleware MUST reject legacy static API tokens and any other bearer token that is not a valid slurmtack-issued Web Session JWT.
+
+#### Scenario: Authenticated request with valid Web Session JWT
+- **WHEN** client sends a request with header `Authorization: Bearer <valid-web-jwt>`
+- **THEN** the system authorizes the request and executes the handler with the authenticated user context bound
+
+#### Scenario: Rejected request with expired Web Session JWT
+- **WHEN** client sends a request with header `Authorization: Bearer <expired-web-jwt>`
+- **THEN** the system rejects the request with HTTP 401 and body `{"error": "token expired"}`
+
+#### Scenario: Rejected request with legacy static API token
+- **WHEN** client sends a request with header `Authorization: Bearer <legacy-api-token>`
+- **THEN** the system rejects the request with HTTP 401
+- **AND** the request is not authorized through any static-token fallback
+
+### Requirement: Provide dashboard Slurm settings metadata
+The system SHALL expose `GET /v1/dashboard/settings` for authenticated dashboard clients. The response MUST return only safe operator-guidance metadata needed by the dashboard settings UI and MUST NOT expose workload credentials or other secrets. For the SIF-location hint, the response MUST include `slurm_sif_path_configured` and `slurm_sif_path`, where `slurm_sif_path` is the configured home-relative `SLURM_SIF_PATH` value when present and an empty string otherwise. The system MUST return HTTP 200 whether or not `SLURM_SIF_PATH` is configured so the dashboard can distinguish "path unavailable" from transport failure.
+
+#### Scenario: Return configured Slurm SIF path metadata
+- **WHEN** an authenticated dashboard client sends `GET /v1/dashboard/settings`
+- **AND** the daemon is configured with `SLURM_SIF_PATH=slurmtack/build/output`
+- **THEN** the system returns HTTP 200 with a body that includes `{"slurm_sif_path_configured": true, "slurm_sif_path": "slurmtack/build/output"}`
+- **AND** the response does not include workload JWTs, derived usernames, or expanded `/home/<user>` paths
+
+#### Scenario: Return explicit unavailable state when Slurm SIF path is unset
+- **WHEN** an authenticated dashboard client sends `GET /v1/dashboard/settings`
+- **AND** the daemon does not have `SLURM_SIF_PATH` configured
+- **THEN** the system returns HTTP 200 with a body that includes `{"slurm_sif_path_configured": false, "slurm_sif_path": ""}`
+- **AND** the response lets the dashboard explain that the expected SIF location cannot yet be resolved
 
 ### Requirement: Request a node switch
 
-The system SHALL accept a switch request via `POST /v1/switches` and return a 202 response with an execution ID and status URL. The request body MUST include `direction` and `requested_by`. For `slurm_to_openstack`, the request MAY include `slurm_constraint`, `slurm_partition`, `slurm_account`, and `placeholder_sif_file`; it MAY include `slurm_user` and `slurm_user_token` only as a complete override pair; and it MUST NOT include `node_name`. When `slurm_user` and `slurm_user_token` are both absent, the system MUST fall back to the configured daemon workload identity for Slurm. If neither the request nor the daemon configuration provides a complete workload identity, the system MUST reject the request before creating an execution. For `slurm_to_openstack`, the system MUST also resolve one effective placeholder SIF filename before creating an execution: use `placeholder_sif_file` when provided, otherwise fall back to the configured daemon default filename. The effective filename MUST be a simple basename, and the request MUST be rejected when the filename is missing or invalid, or when the daemon cannot resolve a valid home-relative placeholder SIF directory configuration. Accepted `slurm_to_openstack` requests MUST persist the effective placeholder SIF filename needed for later asynchronous placeholder submission. For `openstack_to_slurm`, the request MUST include `node_name`; before persisting an execution, the system MUST inspect the target node's current Slurm state and reject the request when that state already indicates active Slurm ownership. Accepted `openstack_to_slurm` requests MUST persist the execution in `awaiting_target_node` and use the supplied node to publish the MQ node-selection signal that continues the workflow.
+The system SHALL accept a switch request via `POST /v1/switches` and return a 202 response with an execution ID and status URL. The request body MUST include `direction` and `requested_by`. When the request is authenticated via a dynamic Web Session JWT, the system MUST verify that the `requested_by` field matches the authenticated username or override it with the authenticated username to ensure accountability. For `slurm_to_openstack`, the request MAY include `slurm_constraint`, `slurm_partition`, `slurm_account`, and `placeholder_sif_file`; it MAY include `slurm_user` and `slurm_user_token` only as a complete override pair; and it MUST NOT include `node_name`. When `slurm_user` and `slurm_user_token` are both absent, the system MUST fall back to the configured daemon workload identity for Slurm. If neither the request nor the daemon configuration provides a complete workload identity, the system MUST reject the request before creating an execution. For `slurm_to_openstack`, the system MUST also resolve one effective placeholder SIF filename before creating an execution: use `placeholder_sif_file` when provided, otherwise fall back to the configured daemon `SLURM_SIF_FILE` default filename. The effective filename MUST be a simple basename, and the request MUST be rejected when the filename is missing or invalid, or when the daemon cannot resolve a valid home-relative `SLURM_SIF_PATH` directory configuration. Accepted `slurm_to_openstack` requests MUST persist the effective placeholder SIF filename needed for later asynchronous placeholder submission. For `openstack_to_slurm`, the request MUST include `node_name`; before persisting an execution, the system MUST inspect the target node's current Slurm state and reject the request when that state already indicates active Slurm ownership. Accepted `openstack_to_slurm` requests MUST persist the execution in `awaiting_target_node` and use the supplied node to publish the MQ node-selection signal that continues the workflow.
+
+#### Scenario: Successful slurm_to_openstack request with verified user binding
+- **WHEN** client sends `POST /v1/switches` with `{"direction": "slurm_to_openstack", "requested_by": "alice"}`
+- **AND** the request is authenticated via Web Session JWT with `sub=alice`
+- **THEN** the system accepts the request and persists the execution with `requested_by=alice`
+
+#### Scenario: Rejected slurm_to_openstack request due to spoofed requested_by
+- **WHEN** client sends `POST /v1/switches` with `{"direction": "slurm_to_openstack", "requested_by": "bob"}`
+- **AND** the request is authenticated via Web Session JWT with `sub=alice`
+- **THEN** the system rejects the request with HTTP 400 or overrides `requested_by` with `alice` to ensure accountability
 
 #### Scenario: Successful slurm_to_openstack request with explicit partition, account, and placeholder SIF filename
 
@@ -13,7 +71,7 @@ The system SHALL accept a switch request via `POST /v1/switches` and return a 20
 #### Scenario: Successful slurm_to_openstack request with request-scoped workload credentials
 
 - **WHEN** client sends `POST /v1/switches` with `{"direction": "slurm_to_openstack", "requested_by": "operator-1", "slurm_user": "alice", "slurm_user_token": "jwt-123"}`
-- **AND** the daemon is configured with a valid home-relative placeholder SIF path and default filename
+- **AND** the daemon is configured with a valid home-relative Slurm SIF path and default filename
 - **THEN** system returns HTTP 202 with body `{"execution_id": "<id>", "status_url": "/v1/switches/<id>"}`
 
 #### Scenario: Successful slurm_to_openstack request without explicit partition, override credentials, or filename override
@@ -48,16 +106,16 @@ The system SHALL accept a switch request via `POST /v1/switches` and return a 20
 #### Scenario: Slurm_to_openstack request rejects missing effective placeholder SIF filename
 
 - **WHEN** client sends `POST /v1/switches` with `{"direction": "slurm_to_openstack", "requested_by": "operator-1"}`
-- **AND** the daemon has a valid home-relative placeholder SIF path but no configured default placeholder SIF filename
+- **AND** the daemon has a valid home-relative Slurm SIF path but no configured default Slurm SIF filename
 - **AND** the request does not provide `placeholder_sif_file`
 - **THEN** system returns HTTP 400 with an error indicating that a placeholder SIF filename is required
 - **AND** the system does not create a new execution for that request
 
-#### Scenario: Slurm_to_openstack request rejects missing valid placeholder SIF path config
+#### Scenario: Slurm_to_openstack request rejects missing valid Slurm SIF path config
 
 - **WHEN** client sends `POST /v1/switches` with `{"direction": "slurm_to_openstack", "requested_by": "operator-1", "placeholder_sif_file": "placeholder-agent.sif"}`
-- **AND** the daemon does not have a valid home-relative `PLACEHOLDER_SIF_PATH` configuration
-- **THEN** system returns HTTP 400 with an error indicating that placeholder SIF path configuration is invalid or missing
+- **AND** the daemon does not have a valid home-relative `SLURM_SIF_PATH` configuration
+- **THEN** system returns HTTP 400 with an error indicating that Slurm SIF path configuration is invalid or missing
 - **AND** the system does not create a new execution for that request
 
 #### Scenario: Successful openstack_to_slurm request with node name

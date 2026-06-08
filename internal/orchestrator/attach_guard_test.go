@@ -51,6 +51,8 @@ func (c *attachTestSlurmClient) ListPartitions(_ context.Context) ([]slurm.Parti
 	return nil, nil
 }
 
+func (c *attachTestSlurmClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
+
 func TestDoAttachGuardsResumeForOpenStackToSlurm(t *testing.T) {
 	tests := []struct {
 		name            string

@@ -47,6 +47,8 @@ func (f *captureAllocationClient) ListPartitions(_ context.Context) ([]Partition
 	return nil, nil
 }
 
+func (f *captureAllocationClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
+
 func TestAllocationHandlerSubmitPlaceholderUsesRequestedPartition(t *testing.T) {
 	fakeClient := &captureAllocationClient{}
 	exec := &domain.Execution{

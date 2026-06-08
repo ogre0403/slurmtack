@@ -22,7 +22,7 @@ func setupHistoryServer(t *testing.T) (*Server, *store.SQLiteStore) {
 	t.Cleanup(func() { sqlStore.Close() })
 
 	svc := service.NewSwitchService(sqlStore, nil)
-	srv := NewServer(":0", "test-token", sqlStore, svc, nil, nil)
+	srv := NewServer(":0", sqlStore, svc, nil, nil, WithJWTAuth(testJWTManager, nil))
 	return srv, sqlStore
 }
 
@@ -45,7 +45,8 @@ func seedExecutions(t *testing.T, s *store.SQLiteStore) {
 func doAuthGet(srv *Server, path string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", path, nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	token, _ := testJWTManager.Generate("test-operator")
+	req.Header.Set("Authorization", "Bearer "+token)
 	srv.Engine().ServeHTTP(w, req)
 	return w
 }

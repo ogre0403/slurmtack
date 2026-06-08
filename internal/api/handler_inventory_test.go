@@ -42,6 +42,7 @@ func (f *fakeSlurmInventoryClient) DrainNode(_ context.Context, _, _ string) err
 func (f *fakeSlurmInventoryClient) ResumeNode(_ context.Context, _ string) error               { return nil }
 func (f *fakeSlurmInventoryClient) CancelJob(_ context.Context, _ string) error                { return nil }
 func (f *fakeSlurmInventoryClient) CancelJobWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) error { return nil }
+func (f *fakeSlurmInventoryClient) VerifyToken(_ context.Context, _, _ string) error             { return nil }
 
 type fakeOSInventoryClient struct {
 	services   map[string]*openstack.ComputeServiceStatus

@@ -127,3 +127,8 @@ type InventoryLastExecution struct {
 	OverallStatus string    `json:"overall_status"`
 	RequestedAt   time.Time `json:"requested_at"`
 }
+
+type DashboardSettingsResponse struct {
+	SlurmSifPathConfigured bool   `json:"slurm_sif_path_configured"`
+	SlurmSifPath           string `json:"slurm_sif_path"`
+}

@@ -49,6 +49,10 @@ func (f *capturePlaceholderSlurmClient) ListPartitions(_ context.Context) ([]slu
 	return nil, nil
 }
 
+func (f *capturePlaceholderSlurmClient) VerifyToken(_ context.Context, _, _ string) error {
+	return nil
+}
+
 func TestOrchestratorSubmitPlaceholderUsesRequestedPartition(t *testing.T) {
 	fakeSlurm := &capturePlaceholderSlurmClient{}
 	exec := &domain.Execution{

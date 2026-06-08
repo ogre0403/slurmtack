@@ -254,6 +254,15 @@ func isResumeIdempotent(e *SlurmAPIError) bool {
 	return false
 }
 
+func (c *RestClient) VerifyToken(ctx context.Context, user, token string) error {
+	resp, err := c.doRequestWithIdentity(ctx, http.MethodGet, "/slurm/v0.0.40/partitions", nil, "verify", user, token)
+	if err != nil {
+		return fmt.Errorf("slurm token verification failed: %w", err)
+	}
+	resp.Body.Close()
+	return nil
+}
+
 func (c *RestClient) ListPartitions(ctx context.Context) ([]Partition, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/slurm/v0.0.40/partitions", nil)
 	if err != nil {

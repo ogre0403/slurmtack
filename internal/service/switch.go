@@ -152,7 +152,7 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 		} else if s.placeholderSIFDefaults.File != "" {
 			resolvedPlaceholderSIFFile = s.placeholderSIFDefaults.File
 		} else {
-			return "", fmt.Errorf("%w: placeholder SIF filename is required (provide placeholder_sif_file or configure PLACEHOLDER_SIF_FILE)", ErrInvalidSwitchRequest)
+			return "", fmt.Errorf("%w: placeholder SIF filename is required (provide placeholder_sif_file or configure SLURM_SIF_FILE)", ErrInvalidSwitchRequest)
 		}
 	}
 

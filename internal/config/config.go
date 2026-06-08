@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 )
 
 type Config struct {
-	APIToken   string
 	ListenAddr string
 	DBPath     string
 
@@ -33,11 +33,11 @@ type Config struct {
 	SSHPort             string
 	SSHOptions          string
 	SSHPrivateKeyPath   string
+	JWTSigningKey       []byte
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		APIToken:            os.Getenv("API_TOKEN"),
 		ListenAddr:          os.Getenv("LISTEN_ADDR"),
 		DBPath:              os.Getenv("DB_PATH"),
 		SlurmAPIURL:         os.Getenv("SLURM_API_URL"),
@@ -52,8 +52,8 @@ func Load() (*Config, error) {
 		OSUserDomainName:    os.Getenv("OS_USER_DOMAIN_NAME"),
 		OSProjectDomainName: os.Getenv("OS_PROJECT_DOMAIN_NAME"),
 		AMQPURL:             os.Getenv("AMQP_URL"),
-		PlaceholderSIFPath:  os.Getenv("PLACEHOLDER_SIF_PATH"),
-		PlaceholderSIFFile:  os.Getenv("PLACEHOLDER_SIF_FILE"),
+		PlaceholderSIFPath:  os.Getenv("SLURM_SIF_PATH"),
+		PlaceholderSIFFile:  os.Getenv("SLURM_SIF_FILE"),
 		SSHUser:             os.Getenv("SSH_USER"),
 		SSHPort:             os.Getenv("SSH_PORT"),
 		SSHOptions:          os.Getenv("SSH_OPTIONS"),
@@ -62,6 +62,16 @@ func Load() (*Config, error) {
 
 	cfg.SSHPollInterval = parseDuration(os.Getenv("SSH_POLL_INTERVAL"), 10*time.Second)
 	cfg.SSHPollTimeout = parseDuration(os.Getenv("SSH_POLL_TIMEOUT"), 10*time.Minute)
+
+	if keyStr := os.Getenv("JWT_SIGNING_KEY"); keyStr != "" {
+		cfg.JWTSigningKey = []byte(keyStr)
+	} else {
+		key := make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return nil, fmt.Errorf("generating JWT signing key: %w", err)
+		}
+		cfg.JWTSigningKey = key
+	}
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -107,9 +117,6 @@ func parseDuration(s string, defaultVal time.Duration) time.Duration {
 }
 
 func (c *Config) validate() error {
-	if c.APIToken == "" {
-		return fmt.Errorf("required environment variable API_TOKEN is not set")
-	}
 	if c.PlaceholderSIFPath != "" {
 		if err := validatePlaceholderSIFPath(c.PlaceholderSIFPath); err != nil {
 			return err
@@ -132,12 +139,12 @@ func (c *Config) validate() error {
 
 func validatePlaceholderSIFPath(p string) error {
 	if filepath.IsAbs(p) {
-		return fmt.Errorf("PLACEHOLDER_SIF_PATH must be a home-relative directory, not an absolute path")
+		return fmt.Errorf("SLURM_SIF_PATH must be a home-relative directory, not an absolute path")
 	}
 	cleaned := filepath.Clean(p)
 	for _, seg := range strings.Split(cleaned, string(filepath.Separator)) {
 		if seg == ".." {
-			return fmt.Errorf("PLACEHOLDER_SIF_PATH must be a home-relative directory and must not contain '..'")
+			return fmt.Errorf("SLURM_SIF_PATH must be a home-relative directory and must not contain '..'")
 		}
 	}
 	return nil

@@ -73,6 +73,10 @@ func (f *FakeSlurmClient) ListPartitions(_ context.Context) ([]slurm.Partition, 
 	return nil, nil
 }
 
+func (f *FakeSlurmClient) VerifyToken(_ context.Context, _, _ string) error {
+	return nil
+}
+
 type FakeOpenStackClient struct {
 	Instances  map[string][]openstack.Instance
 	Migrations map[string][]string

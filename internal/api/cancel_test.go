@@ -35,7 +35,7 @@ func setupCancelServer(t *testing.T, state domain.SwitchState, dir domain.Switch
 	}
 
 	svc := service.NewSwitchService(sqlStore, nil)
-	srv := NewServer(":0", "test-token", sqlStore, svc, nil, nil)
+	srv := NewServer(":0", sqlStore, svc, nil, nil, WithJWTAuth(testJWTManager, nil))
 	return srv, exec.ID
 }
 
@@ -43,7 +43,7 @@ func cancelRequest(t *testing.T, srv *Server, id string) *httptest.ResponseRecor
 	t.Helper()
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches/"+id+"/cancel", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	srv.Engine().ServeHTTP(w, req)
 	return w
 }
@@ -127,7 +127,7 @@ func TestCancelEndpoint_IdempotentOnCancelling(t *testing.T) {
 	}
 
 	svc := service.NewSwitchService(sqlStore, nil)
-	srv := NewServer(":0", "test-token", sqlStore, svc, nil, nil)
+	srv := NewServer(":0", sqlStore, svc, nil, nil, WithJWTAuth(testJWTManager, nil))
 
 	w := cancelRequest(t, srv, exec.ID)
 	if w.Code != http.StatusAccepted {

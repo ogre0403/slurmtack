@@ -55,6 +55,8 @@ func (f *fakeAdmissionSlurmClient) ListPartitions(_ context.Context) ([]slurm.Pa
 	return nil, nil
 }
 
+func (f *fakeAdmissionSlurmClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
+
 type ackRecorder struct {
 	acked   int
 	nacked  int

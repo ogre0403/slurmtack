@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/slurmtack/slurmtack/internal/service"
 	"github.com/slurmtack/slurmtack/internal/slurm"
@@ -108,6 +109,17 @@ func setupTestServerWithStore(t *testing.T, readers ...service.SlurmNodeStateRea
 	return setupTestServerWithStoreAndLogger(t, logger, readers...)
 }
 
+var testJWTManager = NewJWTManager([]byte("test-secret-key-32-bytes-long!!"), time.Hour)
+
+func testAuthToken(t *testing.T) string {
+	t.Helper()
+	token, err := testJWTManager.Generate("test-operator")
+	if err != nil {
+		t.Fatalf("generate test JWT: %v", err)
+	}
+	return token
+}
+
 func setupTestServerWithStoreAndLogger(t *testing.T, logger *slog.Logger, readers ...service.SlurmNodeStateReader) (*Server, *store.SQLiteStore) {
 	t.Helper()
 	f, err := os.CreateTemp("", "slurmtack-api-test-*.db")
@@ -129,7 +141,7 @@ func setupTestServerWithStoreAndLogger(t *testing.T, logger *slog.Logger, reader
 	if len(readers) > 0 {
 		svc = svc.WithSlurmNodeStateReader(readers[0])
 	}
-	return NewServer(":0", "test-token", sqlStore, svc, nil, logger), sqlStore
+	return NewServer(":0", sqlStore, svc, nil, logger, WithJWTAuth(testJWTManager, nil)), sqlStore
 }
 
 func TestHealthEndpoint(t *testing.T) {
@@ -175,7 +187,7 @@ func TestCreateSwitch(t *testing.T) {
 	body := `{"direction":"slurm_to_openstack","requested_by":"operator-1","slurm_constraint":"gpu-a100"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -199,7 +211,7 @@ func TestCreateSwitchWithSlurmPartition(t *testing.T) {
 	body := `{"direction":"slurm_to_openstack","requested_by":"operator-1","slurm_constraint":"gpu-a100","slurm_partition":"gpu-maint"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -220,7 +232,7 @@ func TestCreateOpenStackToSlurmStartsAwaitingTargetNode(t *testing.T) {
 	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1","node_name":"gpu-01"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -233,7 +245,7 @@ func TestCreateOpenStackToSlurmStartsAwaitingTargetNode(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest("GET", "/v1/switches/"+createResp.ExecutionID, nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	srv.Engine().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -256,7 +268,7 @@ func TestCreateOpenStackToSlurmRejectsMissingNodeName(t *testing.T) {
 	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -271,7 +283,7 @@ func TestCreateOpenStackToSlurmRejectsDuplicateSlurmOwnership(t *testing.T) {
 	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1","node_name":"gpu-01"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -300,7 +312,7 @@ func TestCreateOpenStackToSlurmLookupFailureReturnsServerError(t *testing.T) {
 	body := `{"direction":"openstack_to_slurm","requested_by":"operator-1","node_name":"gpu-01"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -321,7 +333,7 @@ func TestCreateSwitchInvalidDirection(t *testing.T) {
 	body := `{"direction":"invalid","requested_by":"operator-1"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -336,7 +348,7 @@ func TestCreateSwitchMissingField(t *testing.T) {
 	body := `{"requested_by":"operator-1"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -352,7 +364,7 @@ func TestGetSwitch(t *testing.T) {
 	body := `{"direction":"slurm_to_openstack","requested_by":"op","slurm_constraint":"gpu-a100"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -362,7 +374,7 @@ func TestGetSwitch(t *testing.T) {
 	// Get it
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest("GET", "/v1/switches/"+createResp.ExecutionID, nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	srv.Engine().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -381,7 +393,7 @@ func TestCreateSlurmToOpenStackRejectsNodeName(t *testing.T) {
 	body := `{"direction":"slurm_to_openstack","requested_by":"operator-1","node_name":"gpu-01"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -401,7 +413,7 @@ func TestGetSwitchNotFound(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/v1/switches/nonexistent", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	srv.Engine().ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
@@ -415,7 +427,7 @@ func TestGetSwitchExposesRequestedSlurmAccount(t *testing.T) {
 	body := `{"direction":"slurm_to_openstack","requested_by":"op","slurm_account":"proj-123","slurm_user":"alice","slurm_user_token":"jwt-abc"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -427,7 +439,7 @@ func TestGetSwitchExposesRequestedSlurmAccount(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest("GET", "/v1/switches/"+createResp.ExecutionID, nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	srv.Engine().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -452,7 +464,7 @@ func TestCreateSlurmToOpenStackRejectsIncompleteCredentials(t *testing.T) {
 	body := `{"direction":"slurm_to_openstack","requested_by":"op","slurm_user":"alice"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Engine().ServeHTTP(w, req)
 
@@ -474,7 +486,7 @@ func TestListSwitches(t *testing.T) {
 		body := `{"direction":"openstack_to_slurm","requested_by":"op","node_name":"` + node + `"}`
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/v1/switches", bytes.NewBufferString(body))
-		req.Header.Set("Authorization", "Bearer test-token")
+		req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 		req.Header.Set("Content-Type", "application/json")
 		srv.Engine().ServeHTTP(w, req)
 	}
@@ -482,7 +494,7 @@ func TestListSwitches(t *testing.T) {
 	// List all
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/v1/switches", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	srv.Engine().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -497,7 +509,7 @@ func TestListSwitches(t *testing.T) {
 	// Filter by node
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest("GET", "/v1/switches?node=gpu-01", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	srv.Engine().ServeHTTP(w, req)
 
 	json.Unmarshal(w.Body.Bytes(), &list)
@@ -508,7 +520,7 @@ func TestListSwitches(t *testing.T) {
 	// Filter by status
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest("GET", "/v1/switches?status=active", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	srv.Engine().ServeHTTP(w, req)
 
 	json.Unmarshal(w.Body.Bytes(), &list)
@@ -522,7 +534,7 @@ func TestCancelUnknownID(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/switches/some-id/cancel", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	srv.Engine().ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
@@ -536,7 +548,7 @@ func TestAccessLogSuccessfulV1Request(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/v1/switches", bytes.NewBufferString(`{"direction":"slurm_to_openstack","requested_by":"operator-1","slurm_constraint":"gpu-a100"}`))
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "192.0.2.50:1234"
 	srv.Engine().ServeHTTP(w, req)
@@ -552,7 +564,7 @@ func TestAccessLogSuccessfulV1Request(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest(http.MethodGet, "/v1/switches/"+createResp.ExecutionID, nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testAuthToken(t))
 	req.RemoteAddr = "192.0.2.50:1234"
 	srv.Engine().ServeHTTP(w, req)
 
@@ -561,7 +573,7 @@ func TestAccessLogSuccessfulV1Request(t *testing.T) {
 	}
 
 	assertAPILogRecord(t, logs.findLast("api.request"), http.MethodGet, "/v1/switches/:id", "/v1/switches/"+createResp.ExecutionID, http.StatusOK, "192.0.2.50")
-	assertNoAPISensitiveAttrs(t, logs.findLast("api.request"), "test-token")
+	assertNoAPISensitiveAttrs(t, logs.findLast("api.request"), testAuthToken(t))
 }
 
 func TestAccessLogAuthorizationFailure(t *testing.T) {

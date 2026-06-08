@@ -104,6 +104,8 @@
     #slurm-settings-panel input, #slurm-settings-panel textarea { width: 100%; font-size: 0.8rem; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; }
     #slurm-settings-panel textarea { resize: vertical; min-height: 48px; }
     #slurm-settings-panel .derived-user { font-size: 0.8rem; padding: 6px 8px; background: #f5f5f5; border: 1px solid #eee; border-radius: 4px; color: #333; min-height: 28px; }
+    #slurm-settings-panel .sif-location-hint { font-size: 0.75rem; padding: 6px 8px; background: #f0f7ff; border: 1px solid #cce0ff; border-radius: 4px; color: #333; min-height: 28px; word-break: break-all; }
+    #slurm-settings-panel .sif-location-hint.missing { background: #fff8e6; border-color: #ffd980; color: #6b5000; }
     #slurm-settings-panel .settings-actions { margin-top: 14px; display: flex; gap: 8px; }
     #slurm-settings-panel .settings-actions button { font-size: 0.75rem; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
     #slurm-settings-save { background: #1a1a2e; color: #fff; border: 1px solid #1a1a2e; }
@@ -131,7 +133,9 @@
     <label for="slurm-account-input">Slurm Account</label>
     <input id="slurm-account-input" type="text" placeholder="e.g. proj-123" />
     <label for="slurm-sif-input">Placeholder SIF Filename</label>
-    <input id="slurm-sif-input" type="text" placeholder="e.g. placeholder-agent-debug.sif" />
+    <input id="slurm-sif-input" type="text" placeholder="e.g. placeholder-agent-debug.sif" oninput="onSlurmSifInput()" />
+    <label>Expected SIF Location</label>
+    <div id="slurm-sif-location-hint" class="sif-location-hint missing">—</div>
     <div id="slurm-settings-validation" class="settings-validation"></div>
     <div class="settings-actions">
       <button id="slurm-settings-save" onclick="saveSlurmSettings()">Save</button>

@@ -29,6 +29,12 @@ func (h *SwitchHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if username, exists := c.Get(ContextKeyUsername); exists {
+		if u, ok := username.(string); ok && u != "admin" {
+			req.RequestedBy = u
+		}
+	}
+
 	dir := domain.SwitchDirection(req.Direction)
 	id, err := h.svc.RequestSwitch(c.Request.Context(), service.SwitchRequest{
 		NodeName:           req.NodeName,
