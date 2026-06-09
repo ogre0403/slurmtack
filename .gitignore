@@ -1,7 +1,7 @@
 devcontainer-lock.json
 .spectra/
 openspec/.vector-search.db*
-.env
+.env*
 .claude/settings.local.json
 .spectra.yaml
 output/

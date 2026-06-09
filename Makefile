@@ -2,21 +2,23 @@
 
 SWAG_VERSION ?= v1.16.4
 
+DOCKER := $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podman)
+
 install-swag:
 	go install github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION)
 
 up:
 	@test -f docker/.env || cp docker/.env.example docker/.env
-	docker compose -f docker/docker-compose.yaml up --build -d
+	$(DOCKER) compose -f docker/docker-compose.yaml up --build -d
 
 down:
-	docker compose -f docker/docker-compose.yaml down
+	$(DOCKER) compose -f docker/docker-compose.yaml down
 
 clean: down
 	rm docker/*.db
 
 build:
-	docker compose -f docker/docker-compose.yaml build
+	$(DOCKER) compose -f docker/docker-compose.yaml build
 
 swagger:
 	@command -v swag >/dev/null 2>&1 || $(MAKE) install-swag

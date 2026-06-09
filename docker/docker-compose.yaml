@@ -6,7 +6,7 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "80:80"
+      - "8077:80"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/html:/usr/share/nginx/html:ro
@@ -22,6 +22,9 @@ services:
       dockerfile: docker/Dockerfile
     networks:
       - slurmtack-net
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
     env_file: .env
     volumes:
       - .:/data
