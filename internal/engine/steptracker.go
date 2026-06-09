@@ -136,3 +136,9 @@ func WithSnapshotPaths(before, after string) StepOption {
 		s.SnapshotAfterPath = after
 	}
 }
+
+func WithErrorSummary(summary string) StepOption {
+	return func(s *domain.StepRecord) {
+		s.ErrorSummary = summary
+	}
+}

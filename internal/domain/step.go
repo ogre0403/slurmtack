@@ -13,6 +13,7 @@ type StepRecord struct {
 	RetryCount         int
 	ExitCode           *int
 	ErrorClass         FailureClass
+	ErrorSummary       string
 	CommandID          string
 	StdoutPath         string
 	StderrPath         string

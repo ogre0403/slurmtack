@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS steps (
     retry_count INTEGER NOT NULL DEFAULT 0,
     exit_code INTEGER,
     error_class TEXT NOT NULL DEFAULT '',
+    error_summary TEXT NOT NULL DEFAULT '',
     command_id TEXT NOT NULL DEFAULT '',
     stdout_path TEXT NOT NULL DEFAULT '',
     stderr_path TEXT NOT NULL DEFAULT '',

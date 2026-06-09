@@ -554,9 +554,24 @@ func (o *Orchestrator) doPrecheck(ctx context.Context, exec *domain.Execution) e
 	if o.openstack == nil {
 		return o.failStep(ctx, step, errors.New("openstack client not configured"))
 	}
-	_, err = o.openstack.GetComputeService(ctx, exec.NodeName)
-	if err != nil {
-		return o.failStep(ctx, step, err)
+
+	if exec.Direction == domain.DirectionOpenStackToSlurm {
+		result, err := openstack.EvaluateSourceReadiness(ctx, o.openstack, exec.NodeName)
+		if err != nil {
+			return o.failStep(ctx, step, err)
+		}
+		if !result.Ready {
+			summary := result.ErrorSummary()
+			_ = o.steps.FinishStep(ctx, step, domain.StepStatusFailed,
+				engine.WithErrorClass(domain.FailurePrecheckBlocked),
+				engine.WithErrorSummary(summary))
+			return o.runner.FailExecution(ctx, exec.ID, domain.FailurePrecheckBlocked, "precheck_blocked", summary)
+		}
+	} else {
+		_, err = o.openstack.GetComputeService(ctx, exec.NodeName)
+		if err != nil {
+			return o.failStep(ctx, step, err)
+		}
 	}
 
 	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {

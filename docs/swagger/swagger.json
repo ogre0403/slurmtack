@@ -729,6 +729,10 @@
                     "type": "string",
                     "example": "precheck_blocked"
                 },
+                "error_summary": {
+                    "type": "string",
+                    "example": "resident instances: 2; active migrations: 1"
+                },
                 "exit_code": {
                     "type": "integer"
                 },

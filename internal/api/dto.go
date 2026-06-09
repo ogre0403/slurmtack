@@ -67,6 +67,7 @@ type StepResponse struct {
 	RetryCount         int        `json:"retry_count"`
 	ExitCode           *int       `json:"exit_code,omitempty"`
 	ErrorClass         string     `json:"error_class,omitempty" example:"precheck_blocked"`
+	ErrorSummary       string     `json:"error_summary,omitempty" example:"resident instances: 2; active migrations: 1"`
 	CommandID          string     `json:"command_id,omitempty"`
 	StdoutPath         string     `json:"stdout_path,omitempty"`
 	StderrPath         string     `json:"stderr_path,omitempty"`

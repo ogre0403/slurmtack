@@ -386,6 +386,7 @@
           if (s.exit_code !== null && s.exit_code !== undefined) meta.push('<span>exit: ' + s.exit_code + '</span>');
           if (meta.length) html += '<div class="step-meta">' + meta.join('') + '</div>';
           if (s.error_class) html += '<div class="step-error">' + escapeHtml(s.error_class) + '</div>';
+          if (s.error_summary) html += '<div class="step-error-summary">' + escapeHtml(s.error_summary) + '</div>';
           var paths = [];
           if (s.stdout_path) paths.push('stdout: ' + s.stdout_path);
           if (s.stderr_path) paths.push('stderr: ' + s.stderr_path);

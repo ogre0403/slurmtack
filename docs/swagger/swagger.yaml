@@ -201,6 +201,9 @@ definitions:
       error_class:
         example: precheck_blocked
         type: string
+      error_summary:
+        example: 'resident instances: 2; active migrations: 1'
+        type: string
       exit_code:
         type: integer
       host:

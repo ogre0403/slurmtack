@@ -31,6 +31,10 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := ensureStepColumns(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &SQLiteStore{db: db}, nil
 }
 
@@ -251,12 +255,12 @@ func (s *SQLiteStore) GetLease(_ context.Context, nodeName string) (*domain.Node
 func (s *SQLiteStore) CreateStep(_ context.Context, step *domain.StepRecord) error {
 	_, err := s.db.Exec(`INSERT INTO steps (
 		execution_id, step_name, sequence, host, started_at, ended_at,
-		status, retry_count, exit_code, error_class, command_id,
+		status, retry_count, exit_code, error_class, error_summary, command_id,
 		stdout_path, stderr_path, snapshot_before_path, snapshot_after_path
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		step.ExecutionID, step.StepName, step.Sequence, step.Host, step.StartedAt,
 		nullTime(step.EndedAt), string(step.Status), step.RetryCount, nullInt(step.ExitCode),
-		string(step.ErrorClass), step.CommandID, step.StdoutPath, step.StderrPath,
+		string(step.ErrorClass), step.ErrorSummary, step.CommandID, step.StdoutPath, step.StderrPath,
 		step.SnapshotBeforePath, step.SnapshotAfterPath,
 	)
 	return err
@@ -265,11 +269,11 @@ func (s *SQLiteStore) CreateStep(_ context.Context, step *domain.StepRecord) err
 func (s *SQLiteStore) UpdateStep(_ context.Context, step *domain.StepRecord) error {
 	res, err := s.db.Exec(`UPDATE steps SET
 		host = ?, started_at = ?, ended_at = ?, status = ?, retry_count = ?,
-		exit_code = ?, error_class = ?, command_id = ?, stdout_path = ?,
+		exit_code = ?, error_class = ?, error_summary = ?, command_id = ?, stdout_path = ?,
 		stderr_path = ?, snapshot_before_path = ?, snapshot_after_path = ?
 	WHERE execution_id = ? AND step_name = ? AND sequence = ?`,
 		step.Host, step.StartedAt, nullTime(step.EndedAt), string(step.Status), step.RetryCount,
-		nullInt(step.ExitCode), string(step.ErrorClass), step.CommandID, step.StdoutPath,
+		nullInt(step.ExitCode), string(step.ErrorClass), step.ErrorSummary, step.CommandID, step.StdoutPath,
 		step.StderrPath, step.SnapshotBeforePath, step.SnapshotAfterPath,
 		step.ExecutionID, step.StepName, step.Sequence,
 	)
@@ -286,7 +290,7 @@ func (s *SQLiteStore) UpdateStep(_ context.Context, step *domain.StepRecord) err
 func (s *SQLiteStore) ListSteps(_ context.Context, executionID string) ([]*domain.StepRecord, error) {
 	rows, err := s.db.Query(`SELECT
 		execution_id, step_name, sequence, host, started_at, ended_at,
-		status, retry_count, exit_code, error_class, command_id,
+		status, retry_count, exit_code, error_class, error_summary, command_id,
 		stdout_path, stderr_path, snapshot_before_path, snapshot_after_path
 	FROM steps WHERE execution_id = ? ORDER BY sequence`, executionID)
 	if err != nil {
@@ -302,7 +306,7 @@ func (s *SQLiteStore) ListSteps(_ context.Context, executionID string) ([]*domai
 		err := rows.Scan(
 			&step.ExecutionID, &step.StepName, &step.Sequence, &step.Host, &step.StartedAt,
 			&endedAt, &step.Status, &step.RetryCount, &exitCode, &step.ErrorClass,
-			&step.CommandID, &step.StdoutPath, &step.StderrPath,
+			&step.ErrorSummary, &step.CommandID, &step.StdoutPath, &step.StderrPath,
 			&step.SnapshotBeforePath, &step.SnapshotAfterPath,
 		)
 		if err != nil {
@@ -446,4 +450,36 @@ func nullInt(v *int) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: int64(*v), Valid: true}
+}
+
+func ensureStepColumns(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(steps)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if !existing["error_summary"] {
+		if _, err := db.Exec(`ALTER TABLE steps ADD COLUMN error_summary TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
 }

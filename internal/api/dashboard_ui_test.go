@@ -539,6 +539,7 @@ func TestDashboardJS_StepTimelineRendering(t *testing.T) {
 		"step-name",
 		"step-meta",
 		"step-error",
+		"step-error-summary",
 		"step-paths",
 		"formatStepName",
 		"calcDuration",
@@ -552,6 +553,35 @@ func TestDashboardJS_StepTimelineRendering(t *testing.T) {
 		if !strings.Contains(js, s) {
 			t.Errorf("dashboard JS missing step timeline element: %s", s)
 		}
+	}
+}
+
+func TestDashboardJS_ErrorSummaryRendering(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "s.error_summary") {
+		t.Error("dashboard JS should check step error_summary field for rendering")
+	}
+	if !strings.Contains(js, "step-error-summary") {
+		t.Error("dashboard JS should render error_summary with step-error-summary class")
+	}
+}
+
+func TestDashboardHTML_ErrorSummaryStyle(t *testing.T) {
+	htmlPath := "../../docker/nginx/html/index.html"
+	content, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("reading dashboard HTML: %v", err)
+	}
+	html := string(content)
+
+	if !strings.Contains(html, ".step-timeline .step-error-summary") {
+		t.Error("dashboard HTML should define CSS style for .step-error-summary")
 	}
 }
 

@@ -271,3 +271,92 @@ func TestSteps_ReturnsDetailedMetadata(t *testing.T) {
 		t.Errorf("step[1].stderr_path = %q", s2.StderrPath)
 	}
 }
+
+func TestSteps_ReturnsErrorSummary(t *testing.T) {
+	srv, s := setupHistoryServer(t)
+	exec := &domain.Execution{
+		ID: "step-summary-exec", NodeName: "gpu-01", Direction: domain.DirectionOpenStackToSlurm,
+		OverallStatus: domain.OverallStatusFailed, CurrentState: domain.StateFailedNonDestructive,
+		RequestedAt: time.Now(), RequestedBy: "test",
+		DesiredOwner: domain.OwnerSlurm, PreviousOwner: domain.OwnerOpenStack,
+		FinalErrorCode: "precheck_blocked", FinalErrorSummary: "resident instances: 3; active migrations: 1",
+	}
+	s.CreateExecution(context.Background(), exec)
+
+	now := time.Now()
+	ended := now.Add(2 * time.Second)
+	steps := []*domain.StepRecord{
+		{
+			ExecutionID: "step-summary-exec", StepName: "precheck", Sequence: 1,
+			Host: "gpu-01", StartedAt: now, EndedAt: &ended, Status: domain.StepStatusFailed,
+			ErrorClass: domain.FailurePrecheckBlocked, ErrorSummary: "resident instances: 3; active migrations: 1",
+		},
+	}
+	for _, step := range steps {
+		s.CreateStep(context.Background(), step)
+	}
+
+	w := doAuthGet(srv, "/v1/switches/step-summary-exec/steps")
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	var result []StepResponse
+	json.Unmarshal(w.Body.Bytes(), &result)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(result))
+	}
+
+	step := result[0]
+	if step.ErrorClass != "precheck_blocked" {
+		t.Errorf("error_class = %q, want precheck_blocked", step.ErrorClass)
+	}
+	if step.ErrorSummary != "resident instances: 3; active migrations: 1" {
+		t.Errorf("error_summary = %q, want %q", step.ErrorSummary, "resident instances: 3; active migrations: 1")
+	}
+}
+
+func TestSteps_OmitsErrorSummaryWhenEmpty(t *testing.T) {
+	srv, s := setupHistoryServer(t)
+	exec := &domain.Execution{
+		ID: "step-no-summary", NodeName: "gpu-01", Direction: domain.DirectionOpenStackToSlurm,
+		OverallStatus: domain.OverallStatusActive, CurrentState: domain.StateLocked,
+		RequestedAt: time.Now(), RequestedBy: "test",
+		DesiredOwner: domain.OwnerSlurm, PreviousOwner: domain.OwnerOpenStack,
+	}
+	s.CreateExecution(context.Background(), exec)
+
+	now := time.Now()
+	steps := []*domain.StepRecord{
+		{
+			ExecutionID: "step-no-summary", StepName: "acquire_lease", Sequence: 1,
+			Host: "gpu-01", StartedAt: now, Status: domain.StepStatusSucceeded,
+		},
+	}
+	for _, step := range steps {
+		s.CreateStep(context.Background(), step)
+	}
+
+	w := doAuthGet(srv, "/v1/switches/step-no-summary/steps")
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify that error_summary is omitted from JSON when empty
+	body := w.Body.String()
+	if containsString(body, "error_summary") {
+		t.Error("expected error_summary to be omitted from JSON when empty")
+	}
+}
+
+func containsString(haystack, needle string) bool {
+	return len(haystack) > 0 && len(needle) > 0 && indexOf(haystack, needle) >= 0
+}
+
+func indexOf(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}

@@ -249,6 +249,7 @@ func (h *SwitchHandler) Steps(c *gin.Context) {
 			RetryCount:         s.RetryCount,
 			ExitCode:           s.ExitCode,
 			ErrorClass:         string(s.ErrorClass),
+			ErrorSummary:       s.ErrorSummary,
 			CommandID:          s.CommandID,
 			StdoutPath:         s.StdoutPath,
 			StderrPath:         s.StderrPath,
