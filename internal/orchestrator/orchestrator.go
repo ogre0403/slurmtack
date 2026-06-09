@@ -328,6 +328,11 @@ func (o *Orchestrator) processExecution(ctx context.Context, exec *domain.Execut
 	if exec.CurrentState == domain.StateCancelling {
 		errCode = "cancel_cleanup_failed"
 	}
+
+	if failClass == domain.FailurePrecheckBlocked && exec.CurrentState != domain.StateCancelling {
+		o.bestEffortResourceCleanup(ctx, exec)
+	}
+
 	if failErr := o.runner.FailExecution(ctx, exec.ID, failClass, errCode, err.Error()); failErr != nil {
 		execLog.Warn("orchestrator.fail_execution_error", "error", failErr.Error())
 	}
@@ -552,25 +557,23 @@ func (o *Orchestrator) doPrecheck(ctx context.Context, exec *domain.Execution) e
 	}
 
 	if o.openstack == nil {
-		return o.failStep(ctx, step, errors.New("openstack client not configured"))
+		return o.failPrecheck(ctx, exec, step, "openstack client not configured")
 	}
 
 	if exec.Direction == domain.DirectionOpenStackToSlurm {
 		result, err := openstack.EvaluateSourceReadiness(ctx, o.openstack, exec.NodeName)
 		if err != nil {
-			return o.failStep(ctx, step, err)
+			summary := fmt.Sprintf("source readiness check failed: %s", conciseError(err))
+			return o.failPrecheck(ctx, exec, step, summary)
 		}
 		if !result.Ready {
-			summary := result.ErrorSummary()
-			_ = o.steps.FinishStep(ctx, step, domain.StepStatusFailed,
-				engine.WithErrorClass(domain.FailurePrecheckBlocked),
-				engine.WithErrorSummary(summary))
-			return o.runner.FailExecution(ctx, exec.ID, domain.FailurePrecheckBlocked, "precheck_blocked", summary)
+			return o.failPrecheck(ctx, exec, step, result.ErrorSummary())
 		}
 	} else {
 		_, err = o.openstack.GetComputeService(ctx, exec.NodeName)
 		if err != nil {
-			return o.failStep(ctx, step, err)
+			summary := fmt.Sprintf("compute service on %s: %s", exec.NodeName, conciseError(err))
+			return o.failPrecheck(ctx, exec, step, summary)
 		}
 	}
 
@@ -578,6 +581,17 @@ func (o *Orchestrator) doPrecheck(ctx context.Context, exec *domain.Execution) e
 		return err
 	}
 	return o.runner.Transition(ctx, exec.ID, domain.StatePrecheckPassed)
+}
+
+func conciseError(err error) string {
+	msg := err.Error()
+	if unwrapped := errors.Unwrap(err); unwrapped != nil {
+		inner := unwrapped.Error()
+		if inner != "" {
+			return inner
+		}
+	}
+	return msg
 }
 
 func (o *Orchestrator) doQuiesce(ctx context.Context, exec *domain.Execution) error {
@@ -858,52 +872,15 @@ func (o *Orchestrator) doCancelCleanup(ctx context.Context, exec *domain.Executi
 		"direction", string(exec.Direction),
 	)
 
-	switch src {
-	case domain.StateAwaitingTargetNode:
-		// No external cleanup needed.
+	// Phase 1: source-state-driven rollback actions.
+	if err := o.cancelSourceRollback(ctx, exec, step); err != nil {
+		return err
+	}
 
-	case domain.StateAwaitingSourceAllocation:
-		if exec.PlaceholderJobID != "" {
-			if o.slurm == nil {
-				return o.failStep(ctx, step, errors.New("slurm client not configured"))
-			}
-			if err := o.cancelJobWithExecIdentity(ctx, exec); err != nil {
-				return o.failStep(ctx, step, fmt.Errorf("cancelling placeholder job %s: %w", exec.PlaceholderJobID, err))
-			}
-		}
-
-	case domain.StateSourceQuiescing:
-		switch exec.Direction {
-		case domain.DirectionSlurmToOpenStack:
-			if o.slurm == nil {
-				return o.failStep(ctx, step, errors.New("slurm client not configured"))
-			}
-			if err := o.slurm.ResumeNode(ctx, exec.NodeName); err != nil {
-				return o.failStep(ctx, step, fmt.Errorf("resuming slurm node: %w", err))
-			}
-			if exec.PlaceholderJobID != "" {
-				if err := o.cancelJobWithExecIdentity(ctx, exec); err != nil {
-					return o.failStep(ctx, step, fmt.Errorf("cancelling placeholder job %s: %w", exec.PlaceholderJobID, err))
-				}
-			}
-			if err := o.store.ReleaseLease(ctx, exec.NodeName, exec.ID); err != nil && !errors.Is(err, store.ErrLeaseNotHeld) {
-				return o.failStep(ctx, step, fmt.Errorf("releasing lease: %w", err))
-			}
-
-		case domain.DirectionOpenStackToSlurm:
-			if o.openstack == nil {
-				return o.failStep(ctx, step, errors.New("openstack client not configured"))
-			}
-			if err := o.openstack.EnableComputeService(ctx, exec.NodeName); err != nil {
-				return o.failStep(ctx, step, fmt.Errorf("re-enabling openstack compute service: %w", err))
-			}
-			if err := o.store.ReleaseLease(ctx, exec.NodeName, exec.ID); err != nil && !errors.Is(err, store.ErrLeaseNotHeld) {
-				return o.failStep(ctx, step, fmt.Errorf("releasing lease: %w", err))
-			}
-		}
-
-	default:
-		return o.failStep(ctx, step, fmt.Errorf("unknown cancellation source state: %s", src))
+	// Phase 2: resource-driven teardown — always clean up owned resources
+	// regardless of the source state that accepted the cancellation.
+	if err := o.cancelResourceTeardown(ctx, exec, step); err != nil {
+		return err
 	}
 
 	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
@@ -932,6 +909,80 @@ func (o *Orchestrator) doCancelCleanup(ctx context.Context, exec *domain.Executi
 	return nil
 }
 
+// cancelSourceRollback performs source-state-specific rollback actions (e.g.,
+// resuming a Slurm node or re-enabling an OpenStack compute service).
+func (o *Orchestrator) cancelSourceRollback(ctx context.Context, exec *domain.Execution, step *domain.StepRecord) error {
+	src := exec.CancellationSourceState
+
+	switch src {
+	case domain.StateAwaitingTargetNode, domain.StateAwaitingSourceAllocation:
+		// No source rollback needed for these states.
+
+	case domain.StateSourceQuiescing:
+		switch exec.Direction {
+		case domain.DirectionSlurmToOpenStack:
+			if o.slurm == nil {
+				return o.failStep(ctx, step, errors.New("slurm client not configured"))
+			}
+			if err := o.slurm.ResumeNode(ctx, exec.NodeName); err != nil {
+				return o.failStep(ctx, step, fmt.Errorf("resuming slurm node: %w", err))
+			}
+
+		case domain.DirectionOpenStackToSlurm:
+			if o.openstack == nil {
+				return o.failStep(ctx, step, errors.New("openstack client not configured"))
+			}
+			if err := o.openstack.EnableComputeService(ctx, exec.NodeName); err != nil {
+				return o.failStep(ctx, step, fmt.Errorf("re-enabling openstack compute service: %w", err))
+			}
+		}
+
+	default:
+		return o.failStep(ctx, step, fmt.Errorf("unknown cancellation source state: %s", src))
+	}
+
+	return nil
+}
+
+// cancelResourceTeardown tears down any execution-owned resources (placeholder
+// job and lease) based on what is currently attached to the execution, not the
+// source state. Already-absent resources are treated as successfully cleaned.
+func (o *Orchestrator) cancelResourceTeardown(ctx context.Context, exec *domain.Execution, step *domain.StepRecord) error {
+	if exec.PlaceholderJobID != "" {
+		if o.slurm == nil {
+			return o.failStep(ctx, step, errors.New("slurm client not configured"))
+		}
+		if err := o.cancelJobWithExecIdentity(ctx, exec); err != nil {
+			if !slurm.IsJobNotFound(err) {
+				return o.failStep(ctx, step, fmt.Errorf("cancelling placeholder job %s: %w", exec.PlaceholderJobID, err))
+			}
+		}
+	}
+
+	if err := o.store.ReleaseLease(ctx, exec.NodeName, exec.ID); err != nil && !errors.Is(err, store.ErrLeaseNotHeld) {
+		return o.failStep(ctx, step, fmt.Errorf("releasing lease: %w", err))
+	}
+
+	return nil
+}
+
+// bestEffortResourceCleanup releases placeholder job and lease on a best-effort
+// basis when an execution fails before any destructive mutation. Errors are
+// logged but do not prevent the execution from being terminalized.
+func (o *Orchestrator) bestEffortResourceCleanup(ctx context.Context, exec *domain.Execution) {
+	execLog := trace.ForExecution(o.logger, exec)
+
+	if exec.PlaceholderJobID != "" && o.slurm != nil {
+		if err := o.cancelJobWithExecIdentity(ctx, exec); err != nil && !slurm.IsJobNotFound(err) {
+			execLog.Warn("cleanup.cancel_placeholder_job_failed", "job_id", exec.PlaceholderJobID, "error", err.Error())
+		}
+	}
+
+	if err := o.store.ReleaseLease(ctx, exec.NodeName, exec.ID); err != nil && !errors.Is(err, store.ErrLeaseNotHeld) {
+		execLog.Warn("cleanup.release_lease_failed", "node_name", exec.NodeName, "error", err.Error())
+	}
+}
+
 func (o *Orchestrator) cancelJobWithExecIdentity(ctx context.Context, exec *domain.Execution) error {
 	if exec.SlurmWorkloadUser != "" && exec.SlurmWorkloadToken != "" {
 		return o.slurm.CancelJobWithIdentity(ctx, exec.PlaceholderJobID, slurm.WorkloadIdentity{
@@ -945,6 +996,14 @@ func (o *Orchestrator) cancelJobWithExecIdentity(ctx context.Context, exec *doma
 func (o *Orchestrator) failStep(ctx context.Context, step *domain.StepRecord, err error) error {
 	_ = o.steps.FinishStep(ctx, step, domain.StepStatusFailed)
 	return err
+}
+
+func (o *Orchestrator) failPrecheck(ctx context.Context, exec *domain.Execution, step *domain.StepRecord, summary string) error {
+	_ = o.steps.FinishStep(ctx, step, domain.StepStatusFailed,
+		engine.WithErrorClass(domain.FailurePrecheckBlocked),
+		engine.WithErrorSummary(summary))
+	o.bestEffortResourceCleanup(ctx, exec)
+	return o.runner.FailExecution(ctx, exec.ID, domain.FailurePrecheckBlocked, "precheck_blocked", summary)
 }
 
 func classifyFailure(state domain.SwitchState) domain.FailureClass {

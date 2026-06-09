@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -190,6 +191,50 @@ func TestO2SPrecheckPassesWhenSourceIsReady(t *testing.T) {
 	}
 	if precheckStep.Status != domain.StepStatusSucceeded {
 		t.Fatalf("expected precheck step status succeeded, got %s", precheckStep.Status)
+	}
+}
+
+func TestO2SPrecheckBlockedByReadinessCheckError(t *testing.T) {
+	logger, _ := newCaptureLogger()
+	client := &fakeOpenStackClient{
+		computeServiceErr: errors.New("connection refused"),
+	}
+	orch, s, exec := newPrecheckOrchestrator(t, client, logger)
+
+	orch.processExecution(context.Background(), exec)
+
+	updated, err := s.GetExecution(context.Background(), exec.ID)
+	if err != nil {
+		t.Fatalf("get execution: %v", err)
+	}
+	if updated.CurrentState != domain.StateFailedNonDestructive {
+		t.Fatalf("expected state %s, got %s", domain.StateFailedNonDestructive, updated.CurrentState)
+	}
+	if updated.FinalErrorCode != "precheck_blocked" {
+		t.Fatalf("expected error code precheck_blocked, got %q", updated.FinalErrorCode)
+	}
+	if updated.FinalErrorSummary != "source readiness check failed: connection refused" {
+		t.Fatalf("expected error summary %q, got %q", "source readiness check failed: connection refused", updated.FinalErrorSummary)
+	}
+
+	steps, _ := s.ListSteps(context.Background(), exec.ID)
+	var precheckStep *domain.StepRecord
+	for _, step := range steps {
+		if step.StepName == domain.StepPrecheck {
+			precheckStep = step
+		}
+	}
+	if precheckStep == nil {
+		t.Fatal("expected precheck step to be recorded")
+	}
+	if precheckStep.Status != domain.StepStatusFailed {
+		t.Fatalf("expected precheck step status failed, got %s", precheckStep.Status)
+	}
+	if precheckStep.ErrorClass != domain.FailurePrecheckBlocked {
+		t.Fatalf("expected precheck step error_class precheck_blocked, got %s", precheckStep.ErrorClass)
+	}
+	if precheckStep.ErrorSummary != "source readiness check failed: connection refused" {
+		t.Fatalf("expected precheck step error_summary %q, got %q", "source readiness check failed: connection refused", precheckStep.ErrorSummary)
 	}
 }
 

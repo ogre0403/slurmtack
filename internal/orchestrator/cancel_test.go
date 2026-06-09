@@ -142,6 +142,32 @@ func TestCancelCleanup_AwaitingSourceAllocation_NoJobID_SkipsCancelJob(t *testin
 	}
 }
 
+func TestCancelCleanup_AwaitingSourceAllocation_WithJobAndLease_CancelsBoth(t *testing.T) {
+	exec := newCancellingExec(domain.DirectionSlurmToOpenStack, domain.StateAwaitingSourceAllocation, "job-77")
+	slurmClient := &fakeSlurmCancelClient{}
+	orch, s := setupCancelOrchestrator(t, exec, slurmClient, nil)
+	_ = s.AcquireLease(context.Background(), &domain.NodeLease{
+		NodeName:    "gpu-node-01",
+		ExecutionID: exec.ID,
+		Holder:      "orchestrator",
+		ExpiresAt:   time.Now().Add(time.Hour),
+	})
+
+	orch.processExecution(context.Background(), exec)
+
+	updated, _ := s.GetExecution(context.Background(), exec.ID)
+	if updated.CurrentState != domain.StateCancelled {
+		t.Fatalf("state = %s, want cancelled", updated.CurrentState)
+	}
+	if len(slurmClient.cancelJobIDs) != 1 || slurmClient.cancelJobIDs[0] != "job-77" {
+		t.Fatalf("CancelJob calls = %v, want [job-77]", slurmClient.cancelJobIDs)
+	}
+	_, leaseErr := s.GetLease(context.Background(), "gpu-node-01")
+	if leaseErr == nil {
+		t.Fatal("expected lease to be released")
+	}
+}
+
 // --- source_quiescing slurm_to_openstack: resume node, cancel job, release lease ---
 
 func TestCancelCleanup_SourceQuiescing_S2O_ResumesNodeAndCancelsJob(t *testing.T) {
@@ -245,6 +271,66 @@ func TestRecovery_CancellingExecutionIsRecovered(t *testing.T) {
 	}
 }
 
+// --- idempotent cleanup: already-absent resources don't block cancellation ---
+
+func TestCancelCleanup_PlaceholderJobAlreadyGone_SucceedsAnyway(t *testing.T) {
+	exec := newCancellingExec(domain.DirectionSlurmToOpenStack, domain.StateAwaitingSourceAllocation, "job-gone")
+	slurmClient := &fakeSlurmCancelClient{
+		cancelJobErr: &slurm.SlurmAPIError{StatusCode: 404, Messages: []string{"job not found"}},
+	}
+	orch, s := setupCancelOrchestrator(t, exec, slurmClient, nil)
+
+	orch.processExecution(context.Background(), exec)
+
+	updated, _ := s.GetExecution(context.Background(), exec.ID)
+	if updated.CurrentState != domain.StateCancelled {
+		t.Fatalf("state = %s, want cancelled (job-not-found should be idempotent)", updated.CurrentState)
+	}
+}
+
+func TestCancelCleanup_LeaseAlreadyReleased_SucceedsAnyway(t *testing.T) {
+	exec := newCancellingExec(domain.DirectionSlurmToOpenStack, domain.StateSourceQuiescing, "job-55")
+	slurmClient := &fakeSlurmCancelClient{}
+	orch, s := setupCancelOrchestrator(t, exec, slurmClient, nil)
+	// Intentionally do NOT acquire a lease — simulating already-released.
+
+	orch.processExecution(context.Background(), exec)
+
+	updated, _ := s.GetExecution(context.Background(), exec.ID)
+	if updated.CurrentState != domain.StateCancelled {
+		t.Fatalf("state = %s, want cancelled (absent lease should be idempotent)", updated.CurrentState)
+	}
+}
+
+func TestCancelCleanup_SourceQuiescing_S2O_WithJobAndLease_CleansAll(t *testing.T) {
+	exec := newCancellingExec(domain.DirectionSlurmToOpenStack, domain.StateSourceQuiescing, "job-88")
+	slurmClient := &fakeSlurmCancelClient{}
+	orch, s := setupCancelOrchestrator(t, exec, slurmClient, nil)
+	_ = s.AcquireLease(context.Background(), &domain.NodeLease{
+		NodeName:    "gpu-node-01",
+		ExecutionID: exec.ID,
+		Holder:      "orchestrator",
+		ExpiresAt:   time.Now().Add(time.Hour),
+	})
+
+	orch.processExecution(context.Background(), exec)
+
+	updated, _ := s.GetExecution(context.Background(), exec.ID)
+	if updated.CurrentState != domain.StateCancelled {
+		t.Fatalf("state = %s, want cancelled", updated.CurrentState)
+	}
+	if !slurmClient.resumeCalled {
+		t.Fatal("expected ResumeNode (source rollback)")
+	}
+	if len(slurmClient.cancelJobIDs) != 1 || slurmClient.cancelJobIDs[0] != "job-88" {
+		t.Fatalf("CancelJob calls = %v, want [job-88]", slurmClient.cancelJobIDs)
+	}
+	_, leaseErr := s.GetLease(context.Background(), "gpu-node-01")
+	if leaseErr == nil {
+		t.Fatal("expected lease to be released by resource teardown")
+	}
+}
+
 // --- late MQ event race: state check discards stale events on cancelling execution ---
 
 func TestLateEvent_CancellingExecutionIgnoresNormalProgressionAttempt(t *testing.T) {
@@ -267,5 +353,78 @@ func TestLateEvent_CancellingExecutionIgnoresNormalProgressionAttempt(t *testing
 	fresh, _ := s.GetExecution(context.Background(), exec.ID)
 	if fresh.CurrentState != domain.StateCancelling {
 		t.Fatalf("state = %s after stale event, want cancelling", fresh.CurrentState)
+	}
+}
+
+func TestLateEvent_CancellingWithResources_CleanupStillReleasesAll(t *testing.T) {
+	// Even if an allocation event has already persisted resources before cancellation
+	// cleanup runs, the cleanup must still tear them down.
+	exec := newCancellingExec(domain.DirectionSlurmToOpenStack, domain.StateAwaitingSourceAllocation, "job-late")
+	slurmClient := &fakeSlurmCancelClient{}
+	orch, s := setupCancelOrchestrator(t, exec, slurmClient, nil)
+	_ = s.AcquireLease(context.Background(), &domain.NodeLease{
+		NodeName:    "gpu-node-01",
+		ExecutionID: exec.ID,
+		Holder:      "orchestrator",
+		ExpiresAt:   time.Now().Add(time.Hour),
+	})
+
+	orch.processExecution(context.Background(), exec)
+
+	updated, _ := s.GetExecution(context.Background(), exec.ID)
+	if updated.CurrentState != domain.StateCancelled {
+		t.Fatalf("state = %s, want cancelled", updated.CurrentState)
+	}
+	if len(slurmClient.cancelJobIDs) != 1 {
+		t.Fatalf("expected placeholder job to be cancelled, got %v", slurmClient.cancelJobIDs)
+	}
+	_, leaseErr := s.GetLease(context.Background(), "gpu-node-01")
+	if leaseErr == nil {
+		t.Fatal("expected lease to be released despite late-event timing")
+	}
+}
+
+// --- failure path: precheck failure cleans up placeholder job and lease ---
+
+func TestFailurePath_PrecheckFail_CleansUpJobAndLease(t *testing.T) {
+	// Simulate: placeholder submitted → node identified → lease acquired (locked)
+	// → precheck fails. The execution should be terminalized AND resources cleaned.
+	exec := &domain.Execution{
+		ID:               "precheck-fail-exec",
+		NodeName:         "gpu-node-01",
+		Direction:        domain.DirectionSlurmToOpenStack,
+		RequestedBy:      "test",
+		RequestedAt:      time.Now(),
+		CurrentState:     domain.StateLocked,
+		PlaceholderJobID: "job-precheck",
+		DesiredOwner:     domain.OwnerOpenStack,
+		PreviousOwner:    domain.OwnerSlurm,
+		StateVersion:     4,
+		OverallStatus:    domain.OverallStatusActive,
+	}
+	slurmClient := &fakeSlurmCancelClient{}
+	osClient := &fakeOpenStackClient{
+		computeServiceErr: errors.New("openstack unreachable"),
+	}
+	orch, s := setupCancelOrchestrator(t, exec, slurmClient, osClient)
+	_ = s.AcquireLease(context.Background(), &domain.NodeLease{
+		NodeName:    "gpu-node-01",
+		ExecutionID: exec.ID,
+		Holder:      "orchestrator",
+		ExpiresAt:   time.Now().Add(time.Hour),
+	})
+
+	orch.processExecution(context.Background(), exec)
+
+	updated, _ := s.GetExecution(context.Background(), exec.ID)
+	if updated.CurrentState != domain.StateFailedNonDestructive {
+		t.Fatalf("state = %s, want failed_non_destructive", updated.CurrentState)
+	}
+	if len(slurmClient.cancelJobIDs) != 1 || slurmClient.cancelJobIDs[0] != "job-precheck" {
+		t.Fatalf("expected placeholder job cancelled, got %v", slurmClient.cancelJobIDs)
+	}
+	_, leaseErr := s.GetLease(context.Background(), "gpu-node-01")
+	if leaseErr == nil {
+		t.Fatal("expected lease to be released on precheck failure")
 	}
 }

@@ -249,7 +249,9 @@
     var nodeFilter = document.getElementById('history-node-filter');
     var currentVal = nodeFilter.value;
     nodeFilter.innerHTML = '<option value="">All nodes</option>';
-    state.nodes.forEach(function (n) {
+    state.nodes.slice().sort(function (a, b) {
+      return a.node_name < b.node_name ? -1 : a.node_name > b.node_name ? 1 : 0;
+    }).forEach(function (n) {
       var opt = document.createElement('option');
       opt.value = n.node_name;
       opt.textContent = n.node_name;

@@ -393,27 +393,17 @@ func TestHandleNodeSelectedAdmitsOpenStackToSlurmWithoutPolling(t *testing.T) {
 
 	deadline := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		lease, err := s.GetLease(context.Background(), "gpu-02")
-		if err == nil {
-			if lease.ExecutionID != "exec-admit-node-selected" {
-				t.Fatalf("lease.ExecutionID = %q, want %q", lease.ExecutionID, "exec-admit-node-selected")
-			}
-			updated, getErr := s.GetExecution(context.Background(), "exec-admit-node-selected")
-			if getErr != nil {
-				t.Fatalf("GetExecution() error = %v", getErr)
-			}
-			if updated.NodeName != "gpu-02" {
-				t.Fatalf("NodeName = %q, want gpu-02", updated.NodeName)
-			}
-			if updated.CurrentState == domain.StateAwaitingTargetNode {
-				t.Fatalf("CurrentState = %q, want admission beyond awaiting_target_node", updated.CurrentState)
-			}
+		updated, getErr := s.GetExecution(context.Background(), "exec-admit-node-selected")
+		if getErr != nil {
+			t.Fatalf("GetExecution() error = %v", getErr)
+		}
+		if updated.NodeName == "gpu-02" && updated.CurrentState != domain.StateAwaitingTargetNode {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	t.Fatal("timed out waiting for node-selected event admission to acquire lease")
+	t.Fatal("timed out waiting for node-selected event admission to advance execution")
 }
 
 func TestRequestSwitchPublishesNodeSelectedAndAdmitsWithoutManualRMQClient(t *testing.T) {
@@ -439,27 +429,17 @@ func TestRequestSwitchPublishesNodeSelectedAndAdmitsWithoutManualRMQClient(t *te
 
 	deadline := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		lease, err := s.GetLease(context.Background(), "gpu-05")
-		if err == nil {
-			if lease.ExecutionID != execID {
-				t.Fatalf("lease.ExecutionID = %q, want %q", lease.ExecutionID, execID)
-			}
-			updated, getErr := s.GetExecution(context.Background(), execID)
-			if getErr != nil {
-				t.Fatalf("GetExecution() error = %v", getErr)
-			}
-			if updated.NodeName != "gpu-05" {
-				t.Fatalf("NodeName = %q, want gpu-05", updated.NodeName)
-			}
-			if updated.CurrentState == domain.StateAwaitingTargetNode {
-				t.Fatalf("CurrentState = %q, want admission beyond awaiting_target_node", updated.CurrentState)
-			}
+		updated, getErr := s.GetExecution(context.Background(), execID)
+		if getErr != nil {
+			t.Fatalf("GetExecution() error = %v", getErr)
+		}
+		if updated.NodeName == "gpu-05" && updated.CurrentState != domain.StateAwaitingTargetNode {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	t.Fatal("timed out waiting for service-published node-selected event admission to acquire lease")
+	t.Fatal("timed out waiting for service-published node-selected event admission to advance execution")
 }
 
 func TestHandleAllocation_ClosesWaitStep(t *testing.T) {
