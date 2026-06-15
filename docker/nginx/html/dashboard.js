@@ -649,10 +649,26 @@
     }
   };
 
+  // Eagerly exchange the Slurm token for an auth token and fetch dashboard settings so
+  // the SIF-location hint can be computed while the user is still filling the form.
+  async function prefetchDashboardSettings() {
+    if (state.slurmSifPath) return;
+    if (!state.token) {
+      var newToken = await exchangeToken();
+      if (!newToken) return;
+      state.token = newToken;
+      sessionStorage.setItem(SENSITIVE_TOKEN_KEY, newToken);
+    }
+    await loadDashboardSettings();
+  }
+
   window.onSlurmTokenInput = function () {
     state.slurmSettings.slurm_user_token = document.getElementById('slurm-token-input').value.trim();
     state.slurmDerivedUser = decodeSlurmUser(state.slurmSettings.slurm_user_token);
     updateSlurmSettingsUI();
+    if (state.slurmDerivedUser && !state.slurmSifPath) {
+      prefetchDashboardSettings();
+    }
   };
 
   window.onSlurmSifInput = function () {
@@ -676,6 +692,7 @@
         state.token = newToken;
         sessionStorage.setItem(SENSITIVE_TOKEN_KEY, newToken);
         showError('');
+        await loadDashboardSettings();
       } else {
         showError('Token exchange failed. Your Slurm token may be invalid or expired.');
       }

@@ -525,6 +525,82 @@ func TestDashboardJS_SifInputTriggersHintRecompute(t *testing.T) {
 	}
 }
 
+func TestDashboardJS_SaveSlurmSettingsCallsLoadDashboardSettingsAfterTokenExchange(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	// Find saveSlurmSettings function body
+	saveIdx := strings.Index(js, "saveSlurmSettings = async function")
+	if saveIdx < 0 {
+		t.Fatal("dashboard JS should define saveSlurmSettings")
+	}
+	saveBody := js[saveIdx:]
+
+	// exchangeToken must be called before loadDashboardSettings within saveSlurmSettings
+	exchangeIdx := strings.Index(saveBody, "exchangeToken()")
+	loadIdx := strings.Index(saveBody, "loadDashboardSettings()")
+	if loadIdx < 0 {
+		t.Error("saveSlurmSettings should call loadDashboardSettings() after token exchange so the SIF location hint renders immediately without a page reload")
+	}
+	if exchangeIdx >= 0 && loadIdx >= 0 && loadIdx < exchangeIdx {
+		t.Error("loadDashboardSettings() should be called after exchangeToken() in saveSlurmSettings, not before")
+	}
+}
+
+func TestDashboardJS_PrefetchDashboardSettingsOnTokenInput(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "prefetchDashboardSettings") {
+		t.Fatal("dashboard JS should define prefetchDashboardSettings for eager settings loading")
+	}
+
+	// onSlurmTokenInput must call prefetchDashboardSettings so the SIF-location hint
+	// can appear while the user is still filling the form on first page load.
+	tokenInputIdx := strings.Index(js, "onSlurmTokenInput = function")
+	if tokenInputIdx < 0 {
+		t.Fatal("dashboard JS should define onSlurmTokenInput")
+	}
+	// Grab from the function definition to the next top-level window. assignment as a boundary
+	bodyEnd := strings.Index(js[tokenInputIdx:], "window.onSlurmSifInput")
+	var tokenInputBody string
+	if bodyEnd > 0 {
+		tokenInputBody = js[tokenInputIdx : tokenInputIdx+bodyEnd]
+	} else {
+		tokenInputBody = js[tokenInputIdx:]
+	}
+	if !strings.Contains(tokenInputBody, "prefetchDashboardSettings") {
+		t.Error("onSlurmTokenInput should call prefetchDashboardSettings so slurmSifPath is loaded before the user clicks Save")
+	}
+
+	// prefetchDashboardSettings must exchange the token and then load dashboard settings
+	prefetchIdx := strings.Index(js, "async function prefetchDashboardSettings")
+	if prefetchIdx < 0 {
+		t.Fatal("prefetchDashboardSettings must be an async function")
+	}
+	prefetchBodyEnd := strings.Index(js[prefetchIdx:], "\n  window.")
+	var prefetchBody string
+	if prefetchBodyEnd > 0 {
+		prefetchBody = js[prefetchIdx : prefetchIdx+prefetchBodyEnd]
+	} else {
+		prefetchBody = js[prefetchIdx:]
+	}
+	if !strings.Contains(prefetchBody, "exchangeToken") {
+		t.Error("prefetchDashboardSettings should exchange the Slurm token for an auth token")
+	}
+	if !strings.Contains(prefetchBody, "loadDashboardSettings") {
+		t.Error("prefetchDashboardSettings should call loadDashboardSettings after acquiring an auth token")
+	}
+}
+
 func TestDashboardJS_StepTimelineRendering(t *testing.T) {
 	jsPath := "../../docker/nginx/html/dashboard.js"
 	content, err := os.ReadFile(jsPath)
