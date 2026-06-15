@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var PAGE_SIZE = 10;
+  var PAGE_SIZE = 8;
 
   var SENSITIVE_TOKEN_KEY = 'slurmtack_token';
   var SLURM_TOKEN_KEY = 'slurmtack_slurm_user_token';
@@ -238,7 +238,8 @@
 
       card.innerHTML =
         '<h3>' + escapeHtml(node.node_name) + ' <span class="owner-badge ' + ownerClass + '">' + escapeHtml(node.owner) + '</span></h3>' +
-        '<div class="meta">Slurm: ' + escapeHtml(slurmState) + ' | OS: ' + escapeHtml(osEnabled) + '</div>' +
+        '<div class="meta">Slurm: ' + escapeHtml(slurmState) + '</div>' +
+        '<div class="meta">OpenStack: ' + escapeHtml(osEnabled) + '</div>' +
         activeInfo + lastInfo +
         '<div class="actions">' + buildNodeActions(node) + '</div>';
 
@@ -304,15 +305,17 @@
     state.executions.forEach(function (exec) {
       var li = document.createElement('li');
       var isActive = exec.overall_status === 'active';
-      if (isActive) li.classList.add('active-exec');
+      li.classList.add(exec.overall_status);
       if (state.selectedExecutionId === exec.id) li.classList.add('selected');
       var cancelBtn = isActive
         ? '<div class="exec-row-actions"><button class="exec-cancel danger" onclick="event.stopPropagation();cancelExecution(\'' + escapeAttr(exec.id) + '\')">Cancel</button></div>'
         : '';
       li.innerHTML =
-        '<span class="history-status ' + escapeAttr(exec.overall_status) + '"></span>' +
-        '<strong>' + escapeHtml(exec.id) + '</strong><br>' +
-        '<small>' + escapeHtml(exec.direction) + ' &mdash; ' + escapeHtml(exec.current_state) + ' &mdash; ' + formatTime(exec.requested_at) + '</small>' +
+        '<div class="exec-meta">' +
+        '<span class="exec-label">direction: </span>' + escapeHtml(exec.direction) + '<br>' +
+        '<span class="exec-label">status: </span>' + escapeHtml(exec.current_state) + '<br>' +
+        '<span class="exec-label">time: </span>' + formatTime(exec.requested_at) +
+        '</div>' +
         cancelBtn;
       li.onclick = function () { selectExecution(exec.id); };
       list.appendChild(li);

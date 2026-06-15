@@ -51,15 +51,16 @@
     #partition-action-bar button:hover { background: #2a2a4e; }
 
     /* Execution panel */
-    #execution-list { list-style: none; max-height: calc(100vh - 200px); overflow-y: auto; }
-    #execution-list li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 0.8rem; position: relative; }
-    #execution-list li:hover { background: #f8f8f8; }
-    #execution-list li.selected { background: #eef2ff; border-left: 3px solid #1a1a2e; }
-    #execution-list li.active-exec { border-left: 3px solid #f39c12; }
-    .history-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-    .history-status.succeeded { background: #2ecc71; }
-    .history-status.failed { background: #e74c3c; }
-    .history-status.active { background: #f39c12; }
+    #execution-list { list-style: none; }
+    #execution-list li { padding: 10px; border-bottom: 1px solid #ddd; cursor: pointer; font-size: 0.8rem; position: relative; }
+    #execution-list li:hover { filter: brightness(0.95); }
+    #execution-list li.selected { border-left: 3px solid #1a1a2e; }
+    #execution-list li.succeeded { background: #eafaf1; }
+    #execution-list li.failed { background: #fdf2f2; }
+    #execution-list li.cancelled { background: #f5f5f5; }
+    #execution-list li.active { background: #fef9e7; }
+    .exec-meta { line-height: 1.8; }
+    .exec-label { color: #888; }
     .exec-row-actions { margin-top: 6px; }
     .exec-cancel { font-size: 0.7rem; padding: 2px 8px; border: 1px solid #e74c3c; border-radius: 4px; cursor: pointer; background: #fff; color: #e74c3c; }
     .exec-cancel:hover { background: #fdf0ef; }
@@ -69,7 +70,7 @@
     .history-filters select, .history-filters input { font-size: 0.75rem; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
 
     /* Pagination controls */
-    .exec-pagination { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 0.75rem; }
+    .exec-pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 8px; font-size: 0.75rem; }
     .exec-pagination button { font-size: 0.75rem; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; background: #fff; }
     .exec-pagination button:disabled { opacity: 0.4; cursor: default; }
     .exec-pagination button:not(:disabled):hover { background: #f0f0f0; }
