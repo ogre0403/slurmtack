@@ -31,6 +31,7 @@ func NewGophecloudClient(ctx context.Context, opts AuthOpts) (Client, error) {
 		Password:         opts.Password,
 		DomainName:       opts.UserDomainName,
 		TenantName:       opts.ProjectName,
+		AllowReauth:      true,
 		Scope: &gophercloud.AuthScope{
 			ProjectName: opts.ProjectName,
 			DomainName:  opts.ProjectDomainName,

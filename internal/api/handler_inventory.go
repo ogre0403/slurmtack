@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -93,13 +94,22 @@ func (h *InventoryHandler) Get(c *gin.Context) {
 			slurmState, _ := h.slurmClient.GetNodeState(ctx, name)
 			e.slurmState = slurmState
 
-			svc, _ := h.osClient.GetComputeService(ctx, name)
+			svc, err1 := h.osClient.GetComputeService(ctx, name)
+			if err1 != nil {
+				slog.Error("GetComputeService error", "node", name, "error", err1)
+			}
 			e.osService = svc
 
-			instances, _ := h.osClient.ListInstances(ctx, name)
+			instances, err2 := h.osClient.ListInstances(ctx, name)
+			if err2 != nil {
+				slog.Error("ListInstances error", "node", name, "error", err2)
+			}
 			e.instances = len(instances)
 
-			migrations, _ := h.osClient.ListActiveMigrations(ctx, name)
+			migrations, err3 := h.osClient.ListActiveMigrations(ctx, name)
+			if err3 != nil {
+				slog.Error("ListActiveMigrations error", "node", name, "error", err3)
+			}
 			e.migrations = len(migrations)
 
 			mu.Lock()
