@@ -58,7 +58,10 @@
     #execution-list li.succeeded { background: #eafaf1; }
     #execution-list li.failed { background: #fdf2f2; }
     #execution-list li.cancelled { background: #f5f5f5; }
-    #execution-list li.active { background: #fef9e7; }
+    #execution-list li.active { background: #fef9e7; border-left: 3px solid #f39c12; animation: pulse-active-row 2s ease-in-out infinite; }
+    @keyframes pulse-active-row { 0%, 100% { border-left-color: #f39c12; box-shadow: inset -1px 0 0 #fef9e7, -3px 0 8px rgba(243,156,18,0.25); } 50% { border-left-color: #e67e22; box-shadow: inset -1px 0 0 #fef9e7, -3px 0 14px rgba(230,126,34,0.55); } }
+    .exec-live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #f39c12; margin-right: 5px; vertical-align: middle; animation: blink-dot 1.2s ease-in-out infinite; }
+    @keyframes blink-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
     .exec-meta { line-height: 1.8; }
     .exec-label { color: #888; }
     .exec-row-actions { margin-top: 6px; }
@@ -66,8 +69,8 @@
     .exec-cancel:hover { background: #fdf0ef; }
 
     /* Execution filters */
-    .history-filters { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
-    .history-filters select, .history-filters input { font-size: 0.75rem; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+    .history-filters { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+    .history-filters select, .history-filters input { font-size: 0.75rem; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; }
 
     /* Pagination controls */
     .exec-pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 8px; font-size: 0.75rem; }
@@ -181,6 +184,11 @@
           <option value="active">Active</option>
           <option value="succeeded">Succeeded</option>
           <option value="failed">Failed</option>
+        </select>
+        <select id="history-direction-filter">
+          <option value="">All directions</option>
+          <option value="slurm_to_openstack">→ OpenStack</option>
+          <option value="openstack_to_slurm">→ Slurm</option>
         </select>
       </div>
       <ul id="execution-list"></ul>

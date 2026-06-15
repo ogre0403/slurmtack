@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var PAGE_SIZE = 8;
+  var PAGE_SIZE = 7;
 
   var SENSITIVE_TOKEN_KEY = 'slurmtack_token';
   var SLURM_TOKEN_KEY = 'slurmtack_slurm_user_token';
@@ -279,9 +279,11 @@
     if (pageIndex === undefined) pageIndex = 0;
     var nodeFilter = document.getElementById('history-node-filter').value;
     var statusFilter = document.getElementById('history-status-filter').value;
+    var directionFilter = document.getElementById('history-direction-filter').value;
     var url = '/v1/switches?limit=' + PAGE_SIZE;
     if (nodeFilter) url += '&node=' + encodeURIComponent(nodeFilter);
     if (statusFilter) url += '&status=' + encodeURIComponent(statusFilter);
+    if (directionFilter) url += '&direction=' + encodeURIComponent(directionFilter);
     var cursor = state.execPageCursors[pageIndex];
     if (cursor) url += '&before=' + encodeURIComponent(cursor);
 
@@ -310,8 +312,10 @@
       var cancelBtn = isActive
         ? '<div class="exec-row-actions"><button class="exec-cancel danger" onclick="event.stopPropagation();cancelExecution(\'' + escapeAttr(exec.id) + '\')">Cancel</button></div>'
         : '';
+      var liveDot = isActive ? '<span class="exec-live-dot"></span>' : '';
       li.innerHTML =
         '<div class="exec-meta">' +
+        liveDot +
         '<span class="exec-label">direction: </span>' + escapeHtml(exec.direction) + '<br>' +
         '<span class="exec-label">status: </span>' + escapeHtml(exec.current_state) + '<br>' +
         '<span class="exec-label">time: </span>' + formatTime(exec.requested_at) +
@@ -729,6 +733,11 @@
     loadExecutions(0);
   };
   document.getElementById('history-status-filter').onchange = function () {
+    state.execPage = 0;
+    state.execPageCursors = [null];
+    loadExecutions(0);
+  };
+  document.getElementById('history-direction-filter').onchange = function () {
     state.execPage = 0;
     state.execPageCursors = [null];
     loadExecutions(0);
