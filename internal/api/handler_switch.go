@@ -24,7 +24,7 @@ func NewSwitchHandler(svc *service.SwitchService, s store.Store) *SwitchHandler 
 
 // Create initiates a node ownership switch.
 // @Summary     Request a node ownership switch
-// @Description Submits a request to switch a node between Slurm and OpenStack ownership. Returns immediately with an execution ID; poll the status URL for progress.
+// @Description Submits a request to switch a node between Slurm and OpenStack ownership. Returns immediately with an execution ID; poll the status URL for progress. When the daemon is configured with SLURM_CLOUD_PARTITION, slurm_to_openstack requests default to the configured partition and reject a different explicit slurm_partition, while openstack_to_slurm requests reject nodes not in the configured partition.
 // @Tags        switches
 // @Accept      json
 // @Produce     json

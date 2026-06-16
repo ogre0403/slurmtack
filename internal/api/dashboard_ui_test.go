@@ -231,8 +231,8 @@ func TestDashboardJS_PartitionScopedPayloadLogic(t *testing.T) {
 	}
 	js := string(content)
 
-	if !strings.Contains(js, `if (state.selectedPartition) body.slurm_partition = state.selectedPartition`) {
-		t.Error("slurm_to_openstack should conditionally include slurm_partition based on selectedPartition")
+	if !strings.Contains(js, `if (effectivePartition) body.slurm_partition = effectivePartition`) {
+		t.Error("slurm_to_openstack should conditionally include slurm_partition based on effectivePartition")
 	}
 	if strings.Contains(js, `node_name`) && strings.Contains(js, `slurm_to_openstack`) {
 		lines := strings.Split(js, "\n")
@@ -464,6 +464,25 @@ func TestDashboardJS_RuntimeConfigRead(t *testing.T) {
 	}
 	if !strings.Contains(js, "slurmSifPathConfigured") {
 		t.Error("dashboard JS state should include slurmSifPathConfigured")
+	}
+	if !strings.Contains(js, "slurmCloudPartition") {
+		t.Error("dashboard JS state should include slurmCloudPartition")
+	}
+}
+
+func TestNginxEntrypoint_PublishesSlurmCloudPartition(t *testing.T) {
+	entrypoint := "../../docker/nginx/docker-entrypoint.sh"
+	content, err := os.ReadFile(entrypoint)
+	if err != nil {
+		t.Fatalf("reading entrypoint: %v", err)
+	}
+	script := string(content)
+
+	if !strings.Contains(script, "SLURM_CLOUD_PARTITION") {
+		t.Error("entrypoint should read SLURM_CLOUD_PARTITION env var")
+	}
+	if !strings.Contains(script, "slurmCloudPartition") {
+		t.Error("entrypoint should publish slurmCloudPartition in dashboard-config.js")
 	}
 }
 

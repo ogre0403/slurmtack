@@ -87,10 +87,24 @@ Use the **Clear** button in the settings panel to remove all stored values.
 
 When the Slurm job settings are incomplete (missing token, undecodable username, missing account, or missing SIF filename), the dashboard blocks `slurm_to_openstack` submission with an operator-visible message. The **Slurm Settings** button appears highlighted when the profile is incomplete.
 
+## Cloud Partition Scope (Optional)
+
+When the deployment sets `SLURM_CLOUD_PARTITION` (e.g. `SLURM_CLOUD_PARTITION=gpu-cloud`), the system enters fixed-partition mode:
+
+- **Inventory** (`GET /v1/dashboard/inventory`): Returns only the configured partition and its nodes. Requests with a conflicting `?partition=` filter receive HTTP 400.
+- **Switch creation** (`POST /v1/switches`):
+  - `slurm_to_openstack`: Uses the configured partition as the effective `slurm_partition`. Rejects an explicit `slurm_partition` that differs from the configured value.
+  - `openstack_to_slurm`: Rejects nodes that are not members of the configured partition.
+- **Dashboard UI**: The "Show all partitions" option is hidden. The partition list shows only the configured partition and switch actions always send `slurm_partition=<configured>`.
+
+When `SLURM_CLOUD_PARTITION` is unset, all behavior remains unchanged (discovery-driven, all partitions visible).
+
+Both the nginx and daemon containers must share the same `SLURM_CLOUD_PARTITION` value from the deployment `.env`. Restart both containers after changing this setting.
+
 ## Switch Actions
 
 - **Switch to Slurm** (`openstack_to_slurm`): Available on node cards for nodes owned by OpenStack. Submits `POST /v1/switches` with `direction=openstack_to_slurm` and the node name.
-- **Switch to OpenStack** (`slurm_to_openstack`): Rendered in a partition-scoped action bar above the node grid (not on individual node cards) because this workflow does not support request-time node targeting. Requires a complete Slurm job settings profile (see above). The request includes `slurm_account`, `placeholder_sif_file`, `slurm_user` (derived from token), and `slurm_user_token`. When the partition selection is `All`, the request omits `slurm_partition` so Slurm uses its default partition. When a specific partition is selected, the request includes `slurm_partition=<name>` to constrain placeholder job allocation.
+- **Switch to OpenStack** (`slurm_to_openstack`): Rendered in a partition-scoped action bar above the node grid (not on individual node cards) because this workflow does not support request-time node targeting. Requires a complete Slurm job settings profile (see above). The request includes `slurm_account`, `placeholder_sif_file`, `slurm_user` (derived from token), and `slurm_user_token`. When the partition selection is `All`, the request omits `slurm_partition` so Slurm uses its default partition. When a specific partition is selected, the request includes `slurm_partition=<name>` to constrain placeholder job allocation. In fixed-partition mode, the configured cloud partition is always sent.
 - **Cancel**: Available on node cards with an active execution. Submits `POST /v1/switches/:id/cancel`.
 
 ## Read Endpoints
@@ -129,4 +143,11 @@ The dashboard is served as static HTML/JS from the nginx container's `/usr/share
 
 The nginx container generates a `dashboard-config.js` file at startup from whitelisted environment variables. This file is served at `/runtime/dashboard-config.js` with `Cache-Control: no-store` and loaded by the dashboard before `dashboard.js` executes.
 
-The `SLURM_SIF_PATH` variable must be set in the deployment `.env` (the same source used by the daemon container). After changing `.env`, restart both the nginx and daemon containers for the new value to take effect.
+The following environment variables are published through runtime configuration:
+
+| Variable | Dashboard Field | Effect |
+|----------|----------------|--------|
+| `SLURM_SIF_PATH` | `slurmSifPath`, `slurmSifPathConfigured` | Enables the expected SIF location hint |
+| `SLURM_CLOUD_PARTITION` | `slurmCloudPartition` | Activates fixed-partition mode in the dashboard |
+
+These variables must be set in the deployment `.env` (the same source used by the daemon container). After changing `.env`, restart both the nginx and daemon containers for the new values to take effect.

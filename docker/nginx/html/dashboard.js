@@ -30,6 +30,7 @@
     slurmDerivedUser: '',
     slurmSifPath: '',
     slurmSifPathConfigured: false,
+    slurmCloudPartition: '',
     renewingToken: null
   };
 
@@ -131,6 +132,10 @@
     var cfg = window.SLURMTACK_CONFIG || {};
     state.slurmSifPathConfigured = cfg.slurmSifPathConfigured || false;
     state.slurmSifPath = cfg.slurmSifPath || '';
+    state.slurmCloudPartition = cfg.slurmCloudPartition || '';
+    if (state.slurmCloudPartition) {
+      state.selectedPartition = state.slurmCloudPartition;
+    }
     updateSlurmSettingsUI();
   }
 
@@ -168,11 +173,13 @@
   function renderPartitions() {
     var list = document.getElementById('partition-list');
     list.innerHTML = '';
-    var allLi = document.createElement('li');
-    allLi.textContent = 'Show all partitions';
-    allLi.className = state.selectedPartition === null ? 'active' : '';
-    allLi.onclick = function () { state.selectedPartition = null; loadInventory(); };
-    list.appendChild(allLi);
+    if (!state.slurmCloudPartition) {
+      var allLi = document.createElement('li');
+      allLi.textContent = 'Show all partitions';
+      allLi.className = state.selectedPartition === null ? 'active' : '';
+      allLi.onclick = function () { state.selectedPartition = null; loadInventory(); };
+      list.appendChild(allLi);
+    }
 
     state.partitions.forEach(function (p) {
       var li = document.createElement('li');
@@ -461,7 +468,8 @@
         slurm_user: state.slurmDerivedUser,
         slurm_user_token: state.slurmSettings.slurm_user_token
       };
-      if (state.selectedPartition) body.slurm_partition = state.selectedPartition;
+      var effectivePartition = state.slurmCloudPartition || state.selectedPartition;
+      if (effectivePartition) body.slurm_partition = effectivePartition;
       var res = await authFetch('/v1/switches', { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
       if (!res.ok) {
         var err = await res.json().catch(function () { return {}; });
@@ -730,7 +738,7 @@
     updateSlurmSettingsUI();
     checkHealth();
     if (state.token) {
-      loadInventory(null);
+      loadInventory(state.slurmCloudPartition || null);
       loadExecutions(0);
     } else {
       hideLoading();

@@ -15,9 +15,10 @@ import (
 )
 
 type InventoryHandler struct {
-	slurmClient slurm.Client
-	osClient    openstack.Client
-	store       store.Store
+	slurmClient        slurm.Client
+	osClient           openstack.Client
+	store              store.Store
+	slurmCloudPartition string
 }
 
 type inventoryEnrichment struct {
@@ -27,18 +28,19 @@ type inventoryEnrichment struct {
 	migrations int
 }
 
-func NewInventoryHandler(sc slurm.Client, oc openstack.Client, s store.Store) *InventoryHandler {
-	return &InventoryHandler{slurmClient: sc, osClient: oc, store: s}
+func NewInventoryHandler(sc slurm.Client, oc openstack.Client, s store.Store, slurmCloudPartition string) *InventoryHandler {
+	return &InventoryHandler{slurmClient: sc, osClient: oc, store: s, slurmCloudPartition: slurmCloudPartition}
 }
 
 // Get returns the current node inventory.
 // @Summary     Get node inventory
-// @Description Returns the current inventory of Slurm partitions and nodes, enriched with OpenStack compute service state and active switch execution status. Only available when both Slurm and OpenStack clients are configured.
+// @Description Returns the current inventory of Slurm partitions and nodes, enriched with OpenStack compute service state and active switch execution status. Only available when both Slurm and OpenStack clients are configured. When the daemon is configured with SLURM_CLOUD_PARTITION, the response is scoped to that partition only and requests for a conflicting partition filter return 400.
 // @Tags        dashboard
 // @Produce     json
 // @Security    BearerAuth
 // @Param       partition query    string false "Filter results to a single Slurm partition by name"
 // @Success     200 {object} InventoryResponse
+// @Failure     400 {object} ErrorResponse
 // @Failure     500 {object} ErrorResponse
 // @Router      /v1/dashboard/inventory [get]
 func (h *InventoryHandler) Get(c *gin.Context) {
@@ -47,13 +49,27 @@ func (h *InventoryHandler) Get(c *gin.Context) {
 
 	partitionFilter := c.Query("partition")
 
+	if h.slurmCloudPartition != "" && partitionFilter != "" && partitionFilter != h.slurmCloudPartition {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "requested partition is outside the configured cloud partition scope"})
+		return
+	}
+
 	partitions, err := h.slurmClient.ListPartitions(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "failed to list partitions: " + err.Error()})
 		return
 	}
 
-	if partitionFilter != "" {
+	if h.slurmCloudPartition != "" {
+		var filtered []slurm.Partition
+		for _, p := range partitions {
+			if p.Name == h.slurmCloudPartition {
+				filtered = append(filtered, p)
+				break
+			}
+		}
+		partitions = filtered
+	} else if partitionFilter != "" {
 		var filtered []slurm.Partition
 		for _, p := range partitions {
 			if p.Name == partitionFilter {

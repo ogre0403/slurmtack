@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,7 +94,7 @@ func setupInventoryTest(t *testing.T, sc *fakeSlurmInventoryClient, oc *fakeOSIn
 	}
 	t.Cleanup(func() { sqlStore.Close() })
 
-	handler := NewInventoryHandler(sc, oc, sqlStore)
+	handler := NewInventoryHandler(sc, oc, sqlStore, "")
 	engine := gin.New()
 	engine.GET("/v1/dashboard/inventory", handler.Get)
 	return engine, sqlStore
@@ -241,5 +242,118 @@ func TestInventory_ActiveExecution(t *testing.T) {
 	}
 	if node.Switch == nil || node.Switch.ActiveExecutionID != "exec-active-1" {
 		t.Errorf("expected switch info, got %+v", node.Switch)
+	}
+}
+
+func setupScopedInventoryTest(t *testing.T, sc *fakeSlurmInventoryClient, oc *fakeOSInventoryClient, cloudPartition string) (*gin.Engine, *store.SQLiteStore) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	sqlStore, err := store.NewSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	t.Cleanup(func() { sqlStore.Close() })
+
+	handler := NewInventoryHandler(sc, oc, sqlStore, cloudPartition)
+	engine := gin.New()
+	engine.GET("/v1/dashboard/inventory", handler.Get)
+	return engine, sqlStore
+}
+
+func TestInventory_ScopedReturnsOnlyConfiguredPartition(t *testing.T) {
+	sc := &fakeSlurmInventoryClient{
+		partitions: []slurm.Partition{
+			{Name: "gpu-cloud", Nodes: []string{"gpu-01", "gpu-02"}},
+			{Name: "gpu-debug", Nodes: []string{"gpu-03"}},
+		},
+		nodes: map[string]*slurm.NodeState{
+			"gpu-01": {NodeName: "gpu-01", State: "idle"},
+			"gpu-02": {NodeName: "gpu-02", State: "idle"},
+			"gpu-03": {NodeName: "gpu-03", State: "idle"},
+		},
+	}
+	oc := &fakeOSInventoryClient{
+		services:   map[string]*openstack.ComputeServiceStatus{},
+		instances:  map[string][]openstack.Instance{},
+		migrations: map[string][]string{},
+	}
+
+	engine, _ := setupScopedInventoryTest(t, sc, oc, "gpu-cloud")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/v1/dashboard/inventory", nil)
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp InventoryResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if len(resp.Partitions) != 1 || resp.Partitions[0].Name != "gpu-cloud" {
+		t.Errorf("expected only gpu-cloud partition, got %+v", resp.Partitions)
+	}
+	if len(resp.Nodes) != 2 {
+		t.Errorf("expected 2 nodes (gpu-01, gpu-02), got %d", len(resp.Nodes))
+	}
+}
+
+func TestInventory_ScopedRejectsConflictingPartitionFilter(t *testing.T) {
+	sc := &fakeSlurmInventoryClient{
+		partitions: []slurm.Partition{
+			{Name: "gpu-cloud", Nodes: []string{"gpu-01"}},
+			{Name: "gpu-debug", Nodes: []string{"gpu-02"}},
+		},
+		nodes: map[string]*slurm.NodeState{},
+	}
+	oc := &fakeOSInventoryClient{
+		services:   map[string]*openstack.ComputeServiceStatus{},
+		instances:  map[string][]openstack.Instance{},
+		migrations: map[string][]string{},
+	}
+
+	engine, _ := setupScopedInventoryTest(t, sc, oc, "gpu-cloud")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/v1/dashboard/inventory?partition=gpu-debug", nil)
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp ErrorResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if !strings.Contains(resp.Error, "outside the configured cloud partition scope") {
+		t.Errorf("expected scope error, got %q", resp.Error)
+	}
+}
+
+func TestInventory_ScopedAcceptsMatchingPartitionFilter(t *testing.T) {
+	sc := &fakeSlurmInventoryClient{
+		partitions: []slurm.Partition{
+			{Name: "gpu-cloud", Nodes: []string{"gpu-01"}},
+		},
+		nodes: map[string]*slurm.NodeState{
+			"gpu-01": {NodeName: "gpu-01", State: "idle"},
+		},
+	}
+	oc := &fakeOSInventoryClient{
+		services:   map[string]*openstack.ComputeServiceStatus{},
+		instances:  map[string][]openstack.Instance{},
+		migrations: map[string][]string{},
+	}
+
+	engine, _ := setupScopedInventoryTest(t, sc, oc, "gpu-cloud")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/v1/dashboard/inventory?partition=gpu-cloud", nil)
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 }

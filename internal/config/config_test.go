@@ -100,3 +100,25 @@ func TestLoadRejectsUnreadableSSHPrivateKeyPath(t *testing.T) {
 		t.Fatalf("Load() error = %q, want readable file error", err)
 	}
 }
+
+func TestLoadReadsSlurmCloudPartition(t *testing.T) {
+	t.Setenv("SLURM_CLOUD_PARTITION", "gpu-cloud")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SlurmCloudPartition != "gpu-cloud" {
+		t.Fatalf("SlurmCloudPartition = %q, want gpu-cloud", cfg.SlurmCloudPartition)
+	}
+}
+
+func TestLoadSlurmCloudPartitionUnset(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SlurmCloudPartition != "" {
+		t.Fatalf("SlurmCloudPartition = %q, want empty", cfg.SlurmCloudPartition)
+	}
+}

@@ -5,6 +5,7 @@ CONFIG_DIR="/tmp/dashboard-runtime"
 mkdir -p "$CONFIG_DIR"
 
 SLURM_SIF_PATH="${SLURM_SIF_PATH:-}"
+SLURM_CLOUD_PARTITION="${SLURM_CLOUD_PARTITION:-}"
 
 if [ -n "$SLURM_SIF_PATH" ]; then
   CONFIGURED="true"
@@ -15,7 +16,8 @@ fi
 cat > "$CONFIG_DIR/dashboard-config.js" <<EOF
 window.SLURMTACK_CONFIG = {
   slurmSifPathConfigured: ${CONFIGURED},
-  slurmSifPath: "${SLURM_SIF_PATH}"
+  slurmSifPath: "${SLURM_SIF_PATH}",
+  slurmCloudPartition: "${SLURM_CLOUD_PARTITION}"
 };
 EOF
 

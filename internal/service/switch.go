@@ -44,6 +44,10 @@ type SlurmNodeStateReader interface {
 	GetNodeState(ctx context.Context, nodeName string) (*slurm.NodeState, error)
 }
 
+type SlurmPartitionLister interface {
+	ListPartitions(ctx context.Context) ([]slurm.Partition, error)
+}
+
 type ExecutionIntake interface {
 	AdmitExecution(ctx context.Context, executionID string)
 }
@@ -65,8 +69,10 @@ type SwitchService struct {
 	intake                  ExecutionIntake
 	logger                  *slog.Logger
 	slurmNodeStateReader    SlurmNodeStateReader
+	slurmPartitionLister    SlurmPartitionLister
 	slurmWorkloadDefaults   *SlurmWorkloadDefaults
 	placeholderSIFDefaults  *PlaceholderSIFDefaults
+	slurmCloudPartition     string
 }
 
 func NewSwitchService(s store.Store, logger *slog.Logger, publishers ...EventPublisher) *SwitchService {
@@ -102,6 +108,41 @@ func (s *SwitchService) WithSlurmNodeStateReader(reader SlurmNodeStateReader) *S
 	return s
 }
 
+func (s *SwitchService) WithSlurmCloudPartition(partition string) *SwitchService {
+	s.slurmCloudPartition = partition
+	return s
+}
+
+func (s *SwitchService) WithSlurmPartitionLister(lister SlurmPartitionLister) *SwitchService {
+	s.slurmPartitionLister = lister
+	return s
+}
+
+func (s *SwitchService) SlurmCloudPartition() string {
+	return s.slurmCloudPartition
+}
+
+func (s *SwitchService) ensureNodeInCloudPartition(ctx context.Context, nodeName string) error {
+	if s.slurmPartitionLister == nil {
+		return fmt.Errorf("%w: partition lister not available to verify cloud partition membership", ErrSwitchRequestDependency)
+	}
+	partitions, err := s.slurmPartitionLister.ListPartitions(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: listing partitions: %v", ErrSwitchRequestDependency, err)
+	}
+	for _, p := range partitions {
+		if p.Name == s.slurmCloudPartition {
+			for _, n := range p.Nodes {
+				if n == nodeName {
+					return nil
+				}
+			}
+			return fmt.Errorf("%w: node %s is not a member of the configured cloud partition %s", ErrInvalidSwitchRequest, nodeName, s.slurmCloudPartition)
+		}
+	}
+	return fmt.Errorf("%w: configured cloud partition %s not found", ErrSwitchRequestDependency, s.slurmCloudPartition)
+}
+
 func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (string, error) {
 	var desired, previous domain.Owner
 	currentState := domain.StateRequested
@@ -122,6 +163,20 @@ func (s *SwitchService) RequestSwitch(ctx context.Context, req SwitchRequest) (s
 		currentState = domain.StateAwaitingTargetNode
 	default:
 		return "", fmt.Errorf("%w: invalid direction: %s", ErrInvalidSwitchRequest, req.Direction)
+	}
+
+	if s.slurmCloudPartition != "" {
+		if req.Direction == domain.DirectionSlurmToOpenStack {
+			if req.SlurmPartition != "" && req.SlurmPartition != s.slurmCloudPartition {
+				return "", fmt.Errorf("%w: only %s is allowed while scoped mode is enabled", ErrInvalidSwitchRequest, s.slurmCloudPartition)
+			}
+			req.SlurmPartition = s.slurmCloudPartition
+		}
+		if req.Direction == domain.DirectionOpenStackToSlurm {
+			if err := s.ensureNodeInCloudPartition(ctx, req.NodeName); err != nil {
+				return "", err
+			}
+		}
 	}
 
 	// Validate pairwise override and resolve effective workload identity for slurm_to_openstack.

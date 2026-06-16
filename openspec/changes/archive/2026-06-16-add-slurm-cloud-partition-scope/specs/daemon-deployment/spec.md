@@ -81,7 +81,7 @@ If any of `SSH_USER`, `SSH_PORT`, `SSH_OPTIONS`, or `SSH_PRIVATE_KEY_PATH` are s
 - **WHEN** `SLURM_CLOUD_PARTITION=gpu-cloud` is set in the deployment environment
 - **THEN** daemon startup succeeds
 - **AND** runtime inventory and switch admission treat `gpu-cloud` as the only allowed cloud partition
-- **AND** the nginx dashboard runtime config exposes `slurmCloudPartition="gpu-cloud"`
+- **AND** the nginx dashboard runtime config exposes `slurmCloudPartition=\"gpu-cloud\"`
 
 #### Scenario: Daemon starts with SSH runner config
 

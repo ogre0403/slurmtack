@@ -579,3 +579,137 @@ func TestRequestSwitchRejectsMissingPlaceholderSIFPathConfig(t *testing.T) {
 		t.Fatalf("RequestSwitch() error = %q, want path config message", err.Error())
 	}
 }
+
+type fakePartitionLister struct {
+	partitions []slurm.Partition
+	err        error
+}
+
+func (f *fakePartitionLister) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
+	return f.partitions, f.err
+}
+
+func TestRequestSwitchScopedS2ODefaultsToConfiguredPartition(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil).
+		WithSlurmWorkloadDefaults("cloud-user", "token").
+		WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder.sif").
+		WithSlurmCloudPartition("gpu-cloud")
+
+	id, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:   domain.DirectionSlurmToOpenStack,
+		RequestedBy: "operator-1",
+	})
+	if err != nil {
+		t.Fatalf("RequestSwitch() error = %v", err)
+	}
+
+	exec, err := s.GetExecution(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetExecution() error = %v", err)
+	}
+	if exec.RequestedSlurmPartition != "gpu-cloud" {
+		t.Fatalf("RequestedSlurmPartition = %q, want gpu-cloud", exec.RequestedSlurmPartition)
+	}
+}
+
+func TestRequestSwitchScopedS2ORejectsMismatchedPartition(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil).
+		WithSlurmWorkloadDefaults("cloud-user", "token").
+		WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder.sif").
+		WithSlurmCloudPartition("gpu-cloud")
+
+	_, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:      domain.DirectionSlurmToOpenStack,
+		RequestedBy:    "operator-1",
+		SlurmPartition: "gpu-debug",
+	})
+	if !errors.Is(err, ErrInvalidSwitchRequest) {
+		t.Fatalf("RequestSwitch() error = %v, want ErrInvalidSwitchRequest", err)
+	}
+	if !strings.Contains(err.Error(), "only gpu-cloud is allowed") {
+		t.Fatalf("RequestSwitch() error = %q, want scope message", err.Error())
+	}
+}
+
+func TestRequestSwitchScopedS2OAcceptsMatchingPartition(t *testing.T) {
+	s := store.NewMemoryStore()
+	svc := NewSwitchService(s, nil).
+		WithSlurmWorkloadDefaults("cloud-user", "token").
+		WithPlaceholderSIFDefaults("slurmtack/build/output", "placeholder.sif").
+		WithSlurmCloudPartition("gpu-cloud")
+
+	id, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:      domain.DirectionSlurmToOpenStack,
+		RequestedBy:    "operator-1",
+		SlurmPartition: "gpu-cloud",
+	})
+	if err != nil {
+		t.Fatalf("RequestSwitch() error = %v", err)
+	}
+
+	exec, err := s.GetExecution(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetExecution() error = %v", err)
+	}
+	if exec.RequestedSlurmPartition != "gpu-cloud" {
+		t.Fatalf("RequestedSlurmPartition = %q, want gpu-cloud", exec.RequestedSlurmPartition)
+	}
+}
+
+func TestRequestSwitchScopedO2SRejectsNodeOutsidePartition(t *testing.T) {
+	s := store.NewMemoryStore()
+	lister := &fakePartitionLister{
+		partitions: []slurm.Partition{
+			{Name: "gpu-cloud", Nodes: []string{"gpu-01", "gpu-02"}},
+			{Name: "gpu-debug", Nodes: []string{"gpu-17"}},
+		},
+	}
+	svc := NewSwitchService(s, nil).
+		WithSlurmCloudPartition("gpu-cloud").
+		WithSlurmPartitionLister(lister)
+
+	_, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:   domain.DirectionOpenStackToSlurm,
+		RequestedBy: "operator-1",
+		NodeName:    "gpu-17",
+	})
+	if !errors.Is(err, ErrInvalidSwitchRequest) {
+		t.Fatalf("RequestSwitch() error = %v, want ErrInvalidSwitchRequest", err)
+	}
+	if !strings.Contains(err.Error(), "not a member of the configured cloud partition") {
+		t.Fatalf("RequestSwitch() error = %q, want membership message", err.Error())
+	}
+}
+
+func TestRequestSwitchScopedO2SAcceptsNodeInPartition(t *testing.T) {
+	s := store.NewMemoryStore()
+	lister := &fakePartitionLister{
+		partitions: []slurm.Partition{
+			{Name: "gpu-cloud", Nodes: []string{"gpu-01", "gpu-02"}},
+		},
+	}
+	reader := &fakeSlurmNodeStateReader{nodeState: &slurm.NodeState{NodeName: "gpu-01", State: "drained"}}
+	svc := NewSwitchService(s, nil).
+		WithSlurmCloudPartition("gpu-cloud").
+		WithSlurmPartitionLister(lister).
+		WithSlurmNodeStateReader(reader)
+
+	id, err := svc.RequestSwitch(context.Background(), SwitchRequest{
+		Direction:   domain.DirectionOpenStackToSlurm,
+		RequestedBy: "operator-1",
+		NodeName:    "gpu-01",
+	})
+	if err != nil {
+		t.Fatalf("RequestSwitch() error = %v", err)
+	}
+
+	exec, err := s.GetExecution(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetExecution() error = %v", err)
+	}
+	if exec.NodeName != "gpu-01" {
+		t.Fatalf("NodeName = %q, want gpu-01", exec.NodeName)
+	}
+}

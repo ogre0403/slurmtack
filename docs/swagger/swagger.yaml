@@ -325,7 +325,9 @@ paths:
     get:
       description: Returns the current inventory of Slurm partitions and nodes, enriched
         with OpenStack compute service state and active switch execution status. Only
-        available when both Slurm and OpenStack clients are configured.
+        available when both Slurm and OpenStack clients are configured. When the daemon
+        is configured with SLURM_CLOUD_PARTITION, the response is scoped to that partition
+        only and requests for a conflicting partition filter return 400.
       parameters:
       - description: Filter results to a single Slurm partition by name
         in: query
@@ -338,6 +340,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/internal_api.InventoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
@@ -399,7 +405,10 @@ paths:
       - application/json
       description: Submits a request to switch a node between Slurm and OpenStack
         ownership. Returns immediately with an execution ID; poll the status URL for
-        progress.
+        progress. When the daemon is configured with SLURM_CLOUD_PARTITION, slurm_to_openstack
+        requests default to the configured partition and reject a different explicit
+        slurm_partition, while openstack_to_slurm requests reject nodes not in the
+        configured partition.
       parameters:
       - description: Switch parameters
         in: body

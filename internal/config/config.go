@@ -29,6 +29,7 @@ type Config struct {
 	SSHPollTimeout      time.Duration
 	PlaceholderSIFPath  string
 	PlaceholderSIFFile  string
+	SlurmCloudPartition string
 	SSHUser             string
 	SSHPort             string
 	SSHOptions          string
@@ -54,6 +55,7 @@ func Load() (*Config, error) {
 		AMQPURL:             os.Getenv("AMQP_URL"),
 		PlaceholderSIFPath:  os.Getenv("SLURM_SIF_PATH"),
 		PlaceholderSIFFile:  os.Getenv("SLURM_SIF_FILE"),
+		SlurmCloudPartition: os.Getenv("SLURM_CLOUD_PARTITION"),
 		SSHUser:             os.Getenv("SSH_USER"),
 		SSHPort:             os.Getenv("SSH_PORT"),
 		SSHOptions:          os.Getenv("SSH_OPTIONS"),

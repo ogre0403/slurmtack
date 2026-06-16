@@ -151,12 +151,18 @@ func main() {
 		svc = svc.WithSlurmWorkloadDefaults(cfg.SlurmAPIUser, cfg.SlurmJWTToken)
 	}
 	svc = svc.WithPlaceholderSIFDefaults(cfg.PlaceholderSIFPath, cfg.PlaceholderSIFFile)
+	if cfg.SlurmCloudPartition != "" {
+		svc = svc.WithSlurmCloudPartition(cfg.SlurmCloudPartition)
+		if slurmClient != nil {
+			svc = svc.WithSlurmPartitionLister(slurmClient)
+		}
+	}
 	if slurmClient != nil {
 		svc = svc.WithSlurmNodeStateReader(slurmClient)
 	}
 	var inventoryHandler *api.InventoryHandler
 	if slurmClient != nil && osClient != nil {
-		inventoryHandler = api.NewInventoryHandler(slurmClient, osClient, sqlStore)
+		inventoryHandler = api.NewInventoryHandler(slurmClient, osClient, sqlStore, cfg.SlurmCloudPartition)
 	}
 
 	jwtMgr := api.NewJWTManager(cfg.JWTSigningKey, time.Hour)
