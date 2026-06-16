@@ -126,16 +126,12 @@
     }
   }
 
-  // Dashboard settings metadata
-  async function loadDashboardSettings() {
-    try {
-      var res = await authFetch('/v1/dashboard/settings', { headers: authHeaders() });
-      if (!res.ok) return;
-      var data = await res.json();
-      state.slurmSifPathConfigured = data.slurm_sif_path_configured || false;
-      state.slurmSifPath = data.slurm_sif_path || '';
-      updateSlurmSettingsUI();
-    } catch (e) { /* silent — hint will show missing-config guidance */ }
+  // Dashboard settings from runtime config (injected by nginx at startup)
+  function loadDashboardSettings() {
+    var cfg = window.SLURMTACK_CONFIG || {};
+    state.slurmSifPathConfigured = cfg.slurmSifPathConfigured || false;
+    state.slurmSifPath = cfg.slurmSifPath || '';
+    updateSlurmSettingsUI();
   }
 
   function computeExpectedSifLocation() {
@@ -656,26 +652,11 @@
     }
   };
 
-  // Eagerly exchange the Slurm token for an auth token and fetch dashboard settings so
-  // the SIF-location hint can be computed while the user is still filling the form.
-  async function prefetchDashboardSettings() {
-    if (state.slurmSifPath) return;
-    if (!state.token) {
-      var newToken = await exchangeToken();
-      if (!newToken) return;
-      state.token = newToken;
-      sessionStorage.setItem(SENSITIVE_TOKEN_KEY, newToken);
-    }
-    await loadDashboardSettings();
-  }
 
   window.onSlurmTokenInput = function () {
     state.slurmSettings.slurm_user_token = document.getElementById('slurm-token-input').value.trim();
     state.slurmDerivedUser = decodeSlurmUser(state.slurmSettings.slurm_user_token);
     updateSlurmSettingsUI();
-    if (state.slurmDerivedUser && !state.slurmSifPath) {
-      prefetchDashboardSettings();
-    }
   };
 
   window.onSlurmSifInput = function () {
@@ -699,7 +680,6 @@
         state.token = newToken;
         sessionStorage.setItem(SENSITIVE_TOKEN_KEY, newToken);
         showError('');
-        await loadDashboardSettings();
       } else {
         showError('Token exchange failed. Your Slurm token may be invalid or expired.');
       }
@@ -745,11 +725,11 @@
 
   // Init
   (async function init() {
+    loadDashboardSettings();
     await ensureToken();
     updateSlurmSettingsUI();
     checkHealth();
     if (state.token) {
-      loadDashboardSettings();
       loadInventory(null);
       loadExecutions(0);
     } else {

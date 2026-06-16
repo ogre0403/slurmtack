@@ -48,7 +48,7 @@ If the token cannot be decoded or no supported claim is present, the settings ar
 The settings panel shows a read-only **Expected SIF Location** hint assembled from three inputs:
 
 - The derived workload username (from the JWT)
-- The daemon's configured `SLURM_SIF_PATH` (fetched from `GET /v1/dashboard/settings` on startup)
+- The `SLURM_SIF_PATH` value injected into the nginx container's runtime configuration at startup
 - The placeholder SIF filename entered in the settings form
 
 When all three are available, the dashboard displays the resolved path as:
@@ -63,15 +63,15 @@ For example, if the token resolves to `alice`, `SLURM_SIF_PATH=slurmtack/build/o
 /home/alice/slurmtack/build/output/placeholder-agent-debug.sif
 ```
 
-This is the path where the SIF file **must exist** on the workload host before a `slurm_to_openstack` switch can succeed. The hint is guidance derived from daemon configuration — it does not verify that the file actually exists on disk.
+This is the path where the SIF file **must exist** on the workload host before a `slurm_to_openstack` switch can succeed. The hint is guidance derived from deployment configuration — it does not verify that the file actually exists on disk.
 
 When the path cannot be resolved, the hint shows explicit guidance:
 
 - **No token or unresolvable user** — prompts the operator to enter a valid Slurm token so the workload user can be derived.
-- **Daemon `SLURM_SIF_PATH` not configured** — indicates that the daemon-side `SLURM_SIF_PATH` environment variable must be set before the full path can be shown.
+- **`SLURM_SIF_PATH` not configured** — indicates that the `SLURM_SIF_PATH` environment variable must be set in the deployment `.env` before the full path can be shown.
 - **No SIF filename entered** — prompts the operator to fill in the placeholder SIF filename.
 
-The hint recomputes live whenever the token or filename fields change. It reflects daemon configuration loaded at page startup; a page reload is required to pick up daemon config changes.
+The hint recomputes live whenever the token or filename fields change. It reflects configuration injected at nginx container startup; both the nginx and daemon containers must be restarted together to pick up `.env` changes.
 
 ### Browser Storage
 
@@ -93,27 +93,7 @@ When the Slurm job settings are incomplete (missing token, undecodable username,
 - **Switch to OpenStack** (`slurm_to_openstack`): Rendered in a partition-scoped action bar above the node grid (not on individual node cards) because this workflow does not support request-time node targeting. Requires a complete Slurm job settings profile (see above). The request includes `slurm_account`, `placeholder_sif_file`, `slurm_user` (derived from token), and `slurm_user_token`. When the partition selection is `All`, the request omits `slurm_partition` so Slurm uses its default partition. When a specific partition is selected, the request includes `slurm_partition=<name>` to constrain placeholder job allocation.
 - **Cancel**: Available on node cards with an active execution. Submits `POST /v1/switches/:id/cancel`.
 
-## New Read Endpoints
-
-### GET /v1/dashboard/settings
-
-Returns daemon configuration metadata needed by the dashboard settings UI. Requires authentication.
-
-Response:
-
-```json
-{
-  "slurm_sif_path_configured": true,
-  "slurm_sif_path": "slurmtack/build/output"
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `slurm_sif_path_configured` | boolean | `true` if `SLURM_SIF_PATH` is set in daemon config, `false` otherwise |
-| `slurm_sif_path` | string | The configured home-relative path segment, or empty string when not configured |
-
-Always returns HTTP 200 so the dashboard can distinguish "path unavailable" from transport failure. Does not expose workload credentials, derived usernames, or expanded absolute paths.
+## Read Endpoints
 
 ### GET /v1/dashboard/inventory
 
@@ -143,4 +123,10 @@ Returns ordered step records for an execution, each including sequence, step nam
 
 ## Deployment
 
-No changes to the deployment topology are required. The dashboard is served as static HTML/JS from the nginx container's `/usr/share/nginx/html/` directory. All API calls use the existing `/v1/` proxy path already configured in nginx.
+The dashboard is served as static HTML/JS from the nginx container's `/usr/share/nginx/html/` directory. All API calls use the existing `/v1/` proxy path already configured in nginx.
+
+### Runtime Configuration
+
+The nginx container generates a `dashboard-config.js` file at startup from whitelisted environment variables. This file is served at `/runtime/dashboard-config.js` with `Cache-Control: no-store` and loaded by the dashboard before `dashboard.js` executes.
+
+The `SLURM_SIF_PATH` variable must be set in the deployment `.env` (the same source used by the daemon container). After changing `.env`, restart both the nginx and daemon containers for the new value to take effect.

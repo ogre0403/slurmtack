@@ -25,11 +25,33 @@ func TestDashboardHTML_ContainsRequiredRegions(t *testing.T) {
 		`id="detail-drawer"`,
 		`id="loading-overlay"`,
 		`dashboard.js`,
+		`dashboard-config.js`,
 	}
 	for _, s := range required {
 		if !strings.Contains(html, s) {
 			t.Errorf("dashboard HTML missing required element: %s", s)
 		}
+	}
+}
+
+func TestDashboardHTML_RuntimeConfigLoadedBeforeDashboardJS(t *testing.T) {
+	htmlPath := "../../docker/nginx/html/index.html"
+	content, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("reading dashboard HTML: %v", err)
+	}
+	html := string(content)
+
+	configIdx := strings.Index(html, "dashboard-config.js")
+	jsIdx := strings.Index(html, `src="dashboard.js"`)
+	if configIdx < 0 {
+		t.Fatal("dashboard HTML should include dashboard-config.js script tag")
+	}
+	if jsIdx < 0 {
+		t.Fatal("dashboard HTML should include dashboard.js script tag")
+	}
+	if configIdx > jsIdx {
+		t.Error("dashboard-config.js must be loaded before dashboard.js")
 	}
 }
 
@@ -420,7 +442,7 @@ func TestDashboardJS_JWTDecodeDerivedUser(t *testing.T) {
 	}
 }
 
-func TestDashboardJS_DashboardSettingsFetch(t *testing.T) {
+func TestDashboardJS_RuntimeConfigRead(t *testing.T) {
 	jsPath := "../../docker/nginx/html/dashboard.js"
 	content, err := os.ReadFile(jsPath)
 	if err != nil {
@@ -428,8 +450,11 @@ func TestDashboardJS_DashboardSettingsFetch(t *testing.T) {
 	}
 	js := string(content)
 
-	if !strings.Contains(js, "/v1/dashboard/settings") {
-		t.Error("dashboard JS should fetch /v1/dashboard/settings for SIF path metadata")
+	if strings.Contains(js, "/v1/dashboard/settings") {
+		t.Error("dashboard JS should not fetch /v1/dashboard/settings (replaced by runtime config)")
+	}
+	if !strings.Contains(js, "SLURMTACK_CONFIG") {
+		t.Error("dashboard JS should read window.SLURMTACK_CONFIG for runtime settings")
 	}
 	if !strings.Contains(js, "loadDashboardSettings") {
 		t.Error("dashboard JS should define loadDashboardSettings")
@@ -501,7 +526,6 @@ func TestDashboardJS_LoadDashboardSettingsCalledOnInit(t *testing.T) {
 	}
 	js := string(content)
 
-	// loadDashboardSettings must be called inside the init block (after token is available)
 	initIdx := strings.Index(js, "async function init()")
 	if initIdx < 0 {
 		t.Fatal("dashboard JS should have an init function")
@@ -525,7 +549,7 @@ func TestDashboardJS_SifInputTriggersHintRecompute(t *testing.T) {
 	}
 }
 
-func TestDashboardJS_SaveSlurmSettingsCallsLoadDashboardSettingsAfterTokenExchange(t *testing.T) {
+func TestDashboardJS_SaveSlurmSettingsDoesNotFetchSettings(t *testing.T) {
 	jsPath := "../../docker/nginx/html/dashboard.js"
 	content, err := os.ReadFile(jsPath)
 	if err != nil {
@@ -533,25 +557,24 @@ func TestDashboardJS_SaveSlurmSettingsCallsLoadDashboardSettingsAfterTokenExchan
 	}
 	js := string(content)
 
-	// Find saveSlurmSettings function body
 	saveIdx := strings.Index(js, "saveSlurmSettings = async function")
 	if saveIdx < 0 {
 		t.Fatal("dashboard JS should define saveSlurmSettings")
 	}
-	saveBody := js[saveIdx:]
-
-	// exchangeToken must be called before loadDashboardSettings within saveSlurmSettings
-	exchangeIdx := strings.Index(saveBody, "exchangeToken()")
-	loadIdx := strings.Index(saveBody, "loadDashboardSettings()")
-	if loadIdx < 0 {
-		t.Error("saveSlurmSettings should call loadDashboardSettings() after token exchange so the SIF location hint renders immediately without a page reload")
+	// saveSlurmSettings should no longer call loadDashboardSettings since config is loaded at startup from runtime config
+	nextFuncIdx := strings.Index(js[saveIdx+1:], "window.")
+	var saveBody string
+	if nextFuncIdx > 0 {
+		saveBody = js[saveIdx : saveIdx+1+nextFuncIdx]
+	} else {
+		saveBody = js[saveIdx:]
 	}
-	if exchangeIdx >= 0 && loadIdx >= 0 && loadIdx < exchangeIdx {
-		t.Error("loadDashboardSettings() should be called after exchangeToken() in saveSlurmSettings, not before")
+	if strings.Contains(saveBody, "loadDashboardSettings") {
+		t.Error("saveSlurmSettings should not call loadDashboardSettings (runtime config is loaded once at startup)")
 	}
 }
 
-func TestDashboardJS_PrefetchDashboardSettingsOnTokenInput(t *testing.T) {
+func TestDashboardJS_RuntimeConfigLoadedBeforeToken(t *testing.T) {
 	jsPath := "../../docker/nginx/html/dashboard.js"
 	content, err := os.ReadFile(jsPath)
 	if err != nil {
@@ -559,45 +582,25 @@ func TestDashboardJS_PrefetchDashboardSettingsOnTokenInput(t *testing.T) {
 	}
 	js := string(content)
 
-	if !strings.Contains(js, "prefetchDashboardSettings") {
-		t.Fatal("dashboard JS should define prefetchDashboardSettings for eager settings loading")
+	if strings.Contains(js, "prefetchDashboardSettings") {
+		t.Error("dashboard JS should not define prefetchDashboardSettings (replaced by synchronous runtime config)")
 	}
 
-	// onSlurmTokenInput must call prefetchDashboardSettings so the SIF-location hint
-	// can appear while the user is still filling the form on first page load.
-	tokenInputIdx := strings.Index(js, "onSlurmTokenInput = function")
-	if tokenInputIdx < 0 {
-		t.Fatal("dashboard JS should define onSlurmTokenInput")
+	initIdx := strings.Index(js, "async function init()")
+	if initIdx < 0 {
+		t.Fatal("dashboard JS should have an init function")
 	}
-	// Grab from the function definition to the next top-level window. assignment as a boundary
-	bodyEnd := strings.Index(js[tokenInputIdx:], "window.onSlurmSifInput")
-	var tokenInputBody string
-	if bodyEnd > 0 {
-		tokenInputBody = js[tokenInputIdx : tokenInputIdx+bodyEnd]
-	} else {
-		tokenInputBody = js[tokenInputIdx:]
+	initBody := js[initIdx:]
+	loadIdx := strings.Index(initBody, "loadDashboardSettings()")
+	tokenIdx := strings.Index(initBody, "ensureToken()")
+	if loadIdx < 0 {
+		t.Fatal("init should call loadDashboardSettings()")
 	}
-	if !strings.Contains(tokenInputBody, "prefetchDashboardSettings") {
-		t.Error("onSlurmTokenInput should call prefetchDashboardSettings so slurmSifPath is loaded before the user clicks Save")
+	if tokenIdx < 0 {
+		t.Fatal("init should call ensureToken()")
 	}
-
-	// prefetchDashboardSettings must exchange the token and then load dashboard settings
-	prefetchIdx := strings.Index(js, "async function prefetchDashboardSettings")
-	if prefetchIdx < 0 {
-		t.Fatal("prefetchDashboardSettings must be an async function")
-	}
-	prefetchBodyEnd := strings.Index(js[prefetchIdx:], "\n  window.")
-	var prefetchBody string
-	if prefetchBodyEnd > 0 {
-		prefetchBody = js[prefetchIdx : prefetchIdx+prefetchBodyEnd]
-	} else {
-		prefetchBody = js[prefetchIdx:]
-	}
-	if !strings.Contains(prefetchBody, "exchangeToken") {
-		t.Error("prefetchDashboardSettings should exchange the Slurm token for an auth token")
-	}
-	if !strings.Contains(prefetchBody, "loadDashboardSettings") {
-		t.Error("prefetchDashboardSettings should call loadDashboardSettings after acquiring an auth token")
+	if loadIdx > tokenIdx {
+		t.Error("loadDashboardSettings() should be called before ensureToken() since it reads synchronous runtime config")
 	}
 }
 

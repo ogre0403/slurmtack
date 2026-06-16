@@ -126,31 +126,6 @@
                 }
             }
         },
-        "/v1/dashboard/settings": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns configuration values used by the Slurmtack dashboard, such as whether a Slurm SIF path is configured.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "dashboard"
-                ],
-                "summary": "Get dashboard settings",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.DashboardSettingsResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/v1/switches": {
             "get": {
                 "security": [
@@ -421,17 +396,6 @@
         }
     },
     "definitions": {
-        "internal_api.DashboardSettingsResponse": {
-            "type": "object",
-            "properties": {
-                "slurm_sif_path": {
-                    "type": "string"
-                },
-                "slurm_sif_path_configured": {
-                    "type": "boolean"
-                }
-            }
-        },
         "internal_api.ErrorResponse": {
             "type": "object",
             "properties": {

@@ -162,7 +162,6 @@ func main() {
 	jwtMgr := api.NewJWTManager(cfg.JWTSigningKey, time.Hour)
 	var serverOpts []api.ServerOption
 	serverOpts = append(serverOpts, api.WithJWTAuth(jwtMgr, slurmClient))
-	serverOpts = append(serverOpts, api.WithSlurmSifPath(cfg.PlaceholderSIFPath))
 	srv := api.NewServer(cfg.ListenAddr, sqlStore, svc, inventoryHandler, baseLogger, serverOpts...)
 
 	wg.Add(1)

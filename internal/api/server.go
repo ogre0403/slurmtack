@@ -16,9 +16,8 @@ import (
 type ServerOption func(*serverOptions)
 
 type serverOptions struct {
-	jwtManager   *JWTManager
-	slurmClient  slurm.Client
-	slurmSifPath string
+	jwtManager  *JWTManager
+	slurmClient slurm.Client
 }
 
 func WithJWTAuth(jwtManager *JWTManager, slurmClient slurm.Client) ServerOption {
@@ -28,11 +27,6 @@ func WithJWTAuth(jwtManager *JWTManager, slurmClient slurm.Client) ServerOption 
 	}
 }
 
-func WithSlurmSifPath(path string) ServerOption {
-	return func(o *serverOptions) {
-		o.slurmSifPath = path
-	}
-}
 
 type Server struct {
 	httpServer *http.Server
@@ -68,8 +62,6 @@ func NewServer(listenAddr string, sqlStore *store.SQLiteStore, svc *service.Swit
 		if inventoryHandler != nil {
 			v1.GET("/dashboard/inventory", inventoryHandler.Get)
 		}
-		settingsHandler := NewDashboardSettingsHandler(sopts.slurmSifPath)
-		v1.GET("/dashboard/settings", settingsHandler.Get)
 	}
 
 	return &Server{

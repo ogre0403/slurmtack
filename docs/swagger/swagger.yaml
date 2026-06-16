@@ -1,12 +1,5 @@
 basePath: /
 definitions:
-  internal_api.DashboardSettingsResponse:
-    properties:
-      slurm_sif_path:
-        type: string
-      slurm_sif_path_configured:
-        type: boolean
-    type: object
   internal_api.ErrorResponse:
     properties:
       error:
@@ -352,22 +345,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Get node inventory
-      tags:
-      - dashboard
-  /v1/dashboard/settings:
-    get:
-      description: Returns configuration values used by the Slurmtack dashboard, such
-        as whether a Slurm SIF path is configured.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/internal_api.DashboardSettingsResponse'
-      security:
-      - BearerAuth: []
-      summary: Get dashboard settings
       tags:
       - dashboard
   /v1/switches:
