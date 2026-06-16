@@ -172,6 +172,39 @@ func (c *RestClient) GetNodeState(ctx context.Context, nodeName string) (*NodeSt
 	return c.parseNodeStateResponse(resp)
 }
 
+func (c *RestClient) GetNodes(ctx context.Context) ([]NodeState, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/slurm/v0.0.40/nodes", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result nodeInfoResponse
+	if err := c.decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+
+	if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
+		return nil, c.apiError(resp.StatusCode, fatalErrs)
+	}
+
+	var states []NodeState
+	for _, node := range result.Nodes {
+		state := NodeState{
+			NodeName: node.Name,
+			State:    strings.Join(node.State, "+"),
+		}
+		if node.Gres != "" {
+			state.GRES = strings.Split(node.Gres, ",")
+		}
+		for _, jid := range node.AllocJobIDs {
+			state.RunningJob = append(state.RunningJob, strconv.Itoa(jid))
+		}
+		states = append(states, state)
+	}
+	return states, nil
+}
+
 func (c *RestClient) parseNodeStateResponse(resp *http.Response) (*NodeState, error) {
 	var result nodeInfoResponse
 	if err := c.decodeResponse(resp, &result); err != nil {

@@ -37,6 +37,7 @@ type Client interface {
 	SubmitPlaceholderJob(ctx context.Context, req PlaceholderJobRequest) (*PlaceholderJobResult, error)
 	GetNodeState(ctx context.Context, nodeName string) (*NodeState, error)
 	GetNodeStateWithIdentity(ctx context.Context, nodeName string, id WorkloadIdentity) (*NodeState, error)
+	GetNodes(ctx context.Context) ([]NodeState, error)
 	DrainNode(ctx context.Context, nodeName, reason string) error
 	ResumeNode(ctx context.Context, nodeName string) error
 	CancelJob(ctx context.Context, jobID string) error

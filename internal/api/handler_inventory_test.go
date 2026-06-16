@@ -24,6 +24,16 @@ func (f *fakeSlurmInventoryClient) ListPartitions(_ context.Context) ([]slurm.Pa
 	return f.partitions, nil
 }
 
+func (f *fakeSlurmInventoryClient) GetNodes(_ context.Context) ([]slurm.NodeState, error) {
+	var list []slurm.NodeState
+	for _, n := range f.nodes {
+		if n != nil {
+			list = append(list, *n)
+		}
+	}
+	return list, nil
+}
+
 func (f *fakeSlurmInventoryClient) GetNodeState(_ context.Context, name string) (*slurm.NodeState, error) {
 	if s, ok := f.nodes[name]; ok {
 		return s, nil
@@ -38,11 +48,13 @@ func (f *fakeSlurmInventoryClient) GetNodeStateWithIdentity(_ context.Context, n
 func (f *fakeSlurmInventoryClient) SubmitPlaceholderJob(_ context.Context, _ slurm.PlaceholderJobRequest) (*slurm.PlaceholderJobResult, error) {
 	return nil, nil
 }
-func (f *fakeSlurmInventoryClient) DrainNode(_ context.Context, _, _ string) error              { return nil }
-func (f *fakeSlurmInventoryClient) ResumeNode(_ context.Context, _ string) error               { return nil }
-func (f *fakeSlurmInventoryClient) CancelJob(_ context.Context, _ string) error                { return nil }
-func (f *fakeSlurmInventoryClient) CancelJobWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) error { return nil }
-func (f *fakeSlurmInventoryClient) VerifyToken(_ context.Context, _, _ string) error             { return nil }
+func (f *fakeSlurmInventoryClient) DrainNode(_ context.Context, _, _ string) error { return nil }
+func (f *fakeSlurmInventoryClient) ResumeNode(_ context.Context, _ string) error   { return nil }
+func (f *fakeSlurmInventoryClient) CancelJob(_ context.Context, _ string) error    { return nil }
+func (f *fakeSlurmInventoryClient) CancelJobWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) error {
+	return nil
+}
+func (f *fakeSlurmInventoryClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 
 type fakeOSInventoryClient struct {
 	services   map[string]*openstack.ComputeServiceStatus

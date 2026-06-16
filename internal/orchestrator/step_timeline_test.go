@@ -51,6 +51,9 @@ func (f *fakeStepSlurmClient) CancelJobWithIdentity(_ context.Context, _ string,
 func (f *fakeStepSlurmClient) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
 	return nil, nil
 }
+func (f *fakeStepSlurmClient) GetNodes(_ context.Context) ([]slurm.NodeState, error) {
+	return nil, nil
+}
 
 func (f *fakeStepSlurmClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 

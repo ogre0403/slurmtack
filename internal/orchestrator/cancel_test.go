@@ -14,10 +14,10 @@ import (
 
 // fakeSlurmCancelClient records calls for cancel-specific tests.
 type fakeSlurmCancelClient struct {
-	resumeErr     error
-	cancelJobErr  error
-	resumeCalled  bool
-	cancelJobIDs  []string
+	resumeErr    error
+	cancelJobErr error
+	resumeCalled bool
+	cancelJobIDs []string
 }
 
 func (f *fakeSlurmCancelClient) SubmitPlaceholderJob(_ context.Context, _ slurm.PlaceholderJobRequest) (*slurm.PlaceholderJobResult, error) {
@@ -52,6 +52,9 @@ func (f *fakeSlurmCancelClient) CancelJobWithIdentity(_ context.Context, jobID s
 }
 
 func (f *fakeSlurmCancelClient) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
+	return nil, nil
+}
+func (f *fakeSlurmCancelClient) GetNodes(_ context.Context) ([]slurm.NodeState, error) {
 	return nil, nil
 }
 

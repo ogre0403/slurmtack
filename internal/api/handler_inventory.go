@@ -42,7 +42,9 @@ func NewInventoryHandler(sc slurm.Client, oc openstack.Client, s store.Store) *I
 // @Failure     500 {object} ErrorResponse
 // @Router      /v1/dashboard/inventory [get]
 func (h *InventoryHandler) Get(c *gin.Context) {
-	ctx := c.Request.Context()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
 	partitionFilter := c.Query("partition")
 
 	partitions, err := h.slurmClient.ListPartitions(ctx)
@@ -81,6 +83,17 @@ func (h *InventoryHandler) Get(c *gin.Context) {
 		}
 	}
 
+	var nodeStates map[string]*slurm.NodeState
+	nodeStateList, err := h.slurmClient.GetNodes(ctx)
+	if err != nil {
+		slog.Error("failed to get slurm nodes", "error", err)
+	} else {
+		nodeStates = make(map[string]*slurm.NodeState)
+		for i := range nodeStateList {
+			nodeStates[nodeStateList[i].NodeName] = &nodeStateList[i]
+		}
+	}
+
 	enrichments := make(map[string]*inventoryEnrichment, len(nodeSet))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -91,8 +104,9 @@ func (h *InventoryHandler) Get(c *gin.Context) {
 			defer wg.Done()
 			e := &inventoryEnrichment{}
 
-			slurmState, _ := h.slurmClient.GetNodeState(ctx, name)
-			e.slurmState = slurmState
+			if nodeStates != nil {
+				e.slurmState = nodeStates[name]
+			}
 
 			svc, err1 := h.osClient.GetComputeService(ctx, name)
 			if err1 != nil {

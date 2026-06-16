@@ -48,6 +48,9 @@ func (f *capturePlaceholderSlurmClient) CancelJobWithIdentity(_ context.Context,
 func (f *capturePlaceholderSlurmClient) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
 	return nil, nil
 }
+func (f *capturePlaceholderSlurmClient) GetNodes(_ context.Context) ([]slurm.NodeState, error) {
+	return nil, nil
+}
 
 func (f *capturePlaceholderSlurmClient) VerifyToken(_ context.Context, _, _ string) error {
 	return nil

@@ -45,6 +45,13 @@ func (c *captureAttachClient) ListPartitions(_ context.Context) ([]Partition, er
 	return nil, nil
 }
 
+func (c *captureAttachClient) GetNodes(_ context.Context) ([]NodeState, error) {
+	if c.nodeState != nil {
+		return []NodeState{*c.nodeState}, nil
+	}
+	return nil, nil
+}
+
 func (c *captureAttachClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 
 func TestAttachHandlerExecuteGuardedResume(t *testing.T) {

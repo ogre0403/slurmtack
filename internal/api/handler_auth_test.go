@@ -31,13 +31,16 @@ func (f *fakeSlurmVerifier) GetNodeState(_ context.Context, _ string) (*slurm.No
 func (f *fakeSlurmVerifier) GetNodeStateWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.NodeState, error) {
 	return nil, nil
 }
-func (f *fakeSlurmVerifier) DrainNode(_ context.Context, _, _ string) error  { return nil }
-func (f *fakeSlurmVerifier) ResumeNode(_ context.Context, _ string) error    { return nil }
-func (f *fakeSlurmVerifier) CancelJob(_ context.Context, _ string) error     { return nil }
+func (f *fakeSlurmVerifier) DrainNode(_ context.Context, _, _ string) error { return nil }
+func (f *fakeSlurmVerifier) ResumeNode(_ context.Context, _ string) error   { return nil }
+func (f *fakeSlurmVerifier) CancelJob(_ context.Context, _ string) error    { return nil }
 func (f *fakeSlurmVerifier) CancelJobWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) error {
 	return nil
 }
 func (f *fakeSlurmVerifier) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
+	return nil, nil
+}
+func (f *fakeSlurmVerifier) GetNodes(_ context.Context) ([]slurm.NodeState, error) {
 	return nil, nil
 }
 

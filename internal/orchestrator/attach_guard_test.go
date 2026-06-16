@@ -50,6 +50,12 @@ func (c *attachTestSlurmClient) CancelJobWithIdentity(_ context.Context, _ strin
 func (c *attachTestSlurmClient) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
 	return nil, nil
 }
+func (c *attachTestSlurmClient) GetNodes(_ context.Context) ([]slurm.NodeState, error) {
+	if c.nodeState != nil {
+		return []slurm.NodeState{*c.nodeState}, nil
+	}
+	return nil, nil
+}
 
 func (c *attachTestSlurmClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 

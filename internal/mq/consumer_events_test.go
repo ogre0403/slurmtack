@@ -54,6 +54,9 @@ func (f *fakeAdmissionSlurmClient) CancelJobWithIdentity(_ context.Context, _ st
 func (f *fakeAdmissionSlurmClient) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
 	return nil, nil
 }
+func (f *fakeAdmissionSlurmClient) GetNodes(_ context.Context) ([]slurm.NodeState, error) {
+	return nil, nil
+}
 
 func (f *fakeAdmissionSlurmClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 

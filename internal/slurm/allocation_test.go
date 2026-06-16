@@ -46,6 +46,9 @@ func (f *captureAllocationClient) CancelJobWithIdentity(_ context.Context, _ str
 func (f *captureAllocationClient) ListPartitions(_ context.Context) ([]Partition, error) {
 	return nil, nil
 }
+func (f *captureAllocationClient) GetNodes(_ context.Context) ([]NodeState, error) {
+	return nil, nil
+}
 
 func (f *captureAllocationClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 
