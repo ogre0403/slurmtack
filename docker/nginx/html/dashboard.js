@@ -673,16 +673,25 @@
   };
 
   window.saveSlurmSettings = async function () {
+    var previousSlurmToken = sessionStorage.getItem(SLURM_TOKEN_KEY) || '';
     state.slurmSettings.slurm_user_token = document.getElementById('slurm-token-input').value.trim();
     state.slurmSettings.slurm_account = document.getElementById('slurm-account-input').value.trim();
     state.slurmSettings.placeholder_sif_file = document.getElementById('slurm-sif-input').value.trim();
     state.slurmDerivedUser = decodeSlurmUser(state.slurmSettings.slurm_user_token);
+    var tokenChanged = previousSlurmToken !== state.slurmSettings.slurm_user_token;
     sessionStorage.setItem(SLURM_TOKEN_KEY, state.slurmSettings.slurm_user_token);
     localStorage.setItem(SLURM_ACCOUNT_KEY, state.slurmSettings.slurm_account);
     localStorage.setItem(SLURM_SIF_KEY, state.slurmSettings.placeholder_sif_file);
+
+    if (!state.slurmSettings.slurm_user_token || tokenChanged) {
+      state.token = '';
+      state.renewingToken = null;
+      sessionStorage.removeItem(SENSITIVE_TOKEN_KEY);
+    }
+
     updateSlurmSettingsUI();
 
-    if (state.slurmSettings.slurm_user_token && !state.token) {
+    if (state.slurmSettings.slurm_user_token && (tokenChanged || !state.token)) {
       var newToken = await exchangeToken();
       if (newToken) {
         state.token = newToken;

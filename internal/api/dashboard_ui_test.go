@@ -593,6 +593,40 @@ func TestDashboardJS_SaveSlurmSettingsDoesNotFetchSettings(t *testing.T) {
 	}
 }
 
+func TestDashboardJS_SaveSlurmSettingsRefreshesSessionOnTokenChange(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	saveIdx := strings.Index(js, "saveSlurmSettings = async function")
+	if saveIdx < 0 {
+		t.Fatal("dashboard JS should define saveSlurmSettings")
+	}
+	nextFuncIdx := strings.Index(js[saveIdx+1:], "window.")
+	var saveBody string
+	if nextFuncIdx > 0 {
+		saveBody = js[saveIdx : saveIdx+1+nextFuncIdx]
+	} else {
+		saveBody = js[saveIdx:]
+	}
+
+	required := []string{
+		"var previousSlurmToken = sessionStorage.getItem(SLURM_TOKEN_KEY) || ''",
+		"var tokenChanged = previousSlurmToken !== state.slurmSettings.slurm_user_token",
+		"if (!state.slurmSettings.slurm_user_token || tokenChanged)",
+		"sessionStorage.removeItem(SENSITIVE_TOKEN_KEY)",
+		"if (state.slurmSettings.slurm_user_token && (tokenChanged || !state.token))",
+	}
+	for _, s := range required {
+		if !strings.Contains(saveBody, s) {
+			t.Errorf("saveSlurmSettings should refresh session auth on token change: %s", s)
+		}
+	}
+}
+
 func TestDashboardJS_RuntimeConfigLoadedBeforeToken(t *testing.T) {
 	jsPath := "../../docker/nginx/html/dashboard.js"
 	content, err := os.ReadFile(jsPath)
