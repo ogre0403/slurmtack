@@ -11,9 +11,7 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/html:/usr/share/nginx/html:ro
       - ./nginx/docker-entrypoint.sh:/docker-entrypoint.sh:ro
-    environment:
-      - SLURM_SIF_PATH=${SLURM_SIF_PATH:-}
-      - SLURM_CLOUD_PARTITION=${SLURM_CLOUD_PARTITION:-}
+    env_file: .env
     entrypoint: ["/docker-entrypoint.sh"]
     networks:
       - slurmtack-net
