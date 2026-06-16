@@ -173,7 +173,7 @@
     var list = document.getElementById('partition-list');
     list.innerHTML = '';
     var allLi = document.createElement('li');
-    allLi.textContent = 'All';
+    allLi.textContent = 'Show all partitions';
     allLi.className = state.selectedPartition === null ? 'active' : '';
     allLi.onclick = function () { state.selectedPartition = null; loadInventory(); };
     list.appendChild(allLi);
@@ -198,7 +198,7 @@
     }
     var label = state.selectedPartition
       ? 'Switch from partition ' + escapeHtml(state.selectedPartition) + ' to OpenStack'
-      : 'Switch from All partitions to OpenStack';
+      : 'Switch from default partition to OpenStack';
     bar.style.display = 'flex';
     var disabledAttr = !state.slurmDerivedUser ? ' disabled' : '';
     bar.innerHTML =
