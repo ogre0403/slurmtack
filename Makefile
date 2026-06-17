@@ -20,6 +20,9 @@ clean: down
 build:
 	$(DOCKER) compose -f docker/docker-compose.yaml build
 
+log:
+	$(DOCKER) logs -f docker-slurmtack-1 2>&1 | jq .
+
 swagger:
 	@command -v swag >/dev/null 2>&1 || $(MAKE) install-swag
 	swag init \
