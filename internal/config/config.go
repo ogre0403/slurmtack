@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,28 +14,30 @@ type Config struct {
 	ListenAddr string
 	DBPath     string
 
-	SlurmAPIURL         string
-	SlurmJWTToken       string
-	SlurmAPIUser        string
-	SlurmAdminUser      string
-	SlurmAdminJWTToken  string
-	OSAuthURL           string
-	OSProjectName       string
-	OSUsername          string
-	OSPassword          string
-	OSUserDomainName    string
-	OSProjectDomainName string
-	AMQPURL             string
-	SSHPollInterval     time.Duration
-	SSHPollTimeout      time.Duration
-	PlaceholderSIFPath  string
-	PlaceholderSIFFile  string
-	SlurmCloudPartition string
-	SSHUser             string
-	SSHPort             string
-	SSHOptions          string
-	SSHPrivateKeyPath   string
-	JWTSigningKey       []byte
+	SlurmAPIURL             string
+	SlurmJWTToken           string
+	SlurmAPIUser            string
+	SlurmAdminUser          string
+	SlurmAdminJWTToken      string
+	SlurmAdminTokenLifespan int
+	OSAuthURL               string
+	OSProjectName           string
+	OSUsername              string
+	OSPassword              string
+	OSUserDomainName        string
+	OSProjectDomainName     string
+	AMQPURL                 string
+	SSHPollInterval         time.Duration
+	SSHPollTimeout          time.Duration
+	PlaceholderSIFPath      string
+	PlaceholderSIFFile      string
+	SlurmCloudPartition     string
+	SSHUser                 string
+	SSHPort                 string
+	SSHOptions              string
+	SSHPrivateKeyPath       string
+	SSHLoginNode            string
+	JWTSigningKey           []byte
 }
 
 func Load() (*Config, error) {
@@ -60,10 +63,12 @@ func Load() (*Config, error) {
 		SSHPort:             os.Getenv("SSH_PORT"),
 		SSHOptions:          os.Getenv("SSH_OPTIONS"),
 		SSHPrivateKeyPath:   os.Getenv("SSH_PRIVATE_KEY_PATH"),
+		SSHLoginNode:        os.Getenv("SSH_LOGIN_NODE"),
 	}
 
 	cfg.SSHPollInterval = parseDuration(os.Getenv("SSH_POLL_INTERVAL"), 10*time.Second)
 	cfg.SSHPollTimeout = parseDuration(os.Getenv("SSH_POLL_TIMEOUT"), 10*time.Minute)
+	cfg.SlurmAdminTokenLifespan = parsePositiveInt(os.Getenv("SLURM_ADMIN_TOKEN_LIFESPAN"), 600)
 
 	if keyStr := os.Getenv("JWT_SIGNING_KEY"); keyStr != "" {
 		cfg.JWTSigningKey = []byte(keyStr)
@@ -93,7 +98,10 @@ func Load() (*Config, error) {
 	if cfg.SlurmAdminUser == "" {
 		cfg.SlurmAdminUser = cfg.SlurmAPIUser
 	}
-	if cfg.SlurmAdminJWTToken == "" {
+	// When SSH-backed renewal is disabled, the admin token falls back to the
+	// workload token for compatibility. When SSH_LOGIN_NODE is set, the admin
+	// token is optional bootstrap state and must not borrow the workload token.
+	if cfg.SSHLoginNode == "" && cfg.SlurmAdminJWTToken == "" {
 		cfg.SlurmAdminJWTToken = cfg.SlurmJWTToken
 	}
 
@@ -116,6 +124,17 @@ func parseDuration(s string, defaultVal time.Duration) time.Duration {
 		return defaultVal
 	}
 	return d
+}
+
+func parsePositiveInt(s string, defaultVal int) int {
+	if s == "" {
+		return defaultVal
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v <= 0 {
+		return defaultVal
+	}
+	return v
 }
 
 func (c *Config) validate() error {
@@ -169,5 +188,11 @@ func IsValidPlaceholderSIFFile(name string) bool {
 }
 
 func (c *Config) SSHRunnerEnabled() bool {
-	return c.SSHUser != "" || c.SSHPort != "" || c.SSHOptions != "" || c.SSHPrivateKeyPath != ""
+	return c.SSHUser != "" || c.SSHPort != "" || c.SSHOptions != "" || c.SSHPrivateKeyPath != "" || c.SSHLoginNode != ""
+}
+
+// SlurmAdminTokenRenewalEnabled reports whether admin tokens should be minted
+// over SSH against the configured login node instead of using a static token.
+func (c *Config) SlurmAdminTokenRenewalEnabled() bool {
+	return c.SSHLoginNode != ""
 }

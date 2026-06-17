@@ -122,3 +122,94 @@ func TestLoadSlurmCloudPartitionUnset(t *testing.T) {
 		t.Fatalf("SlurmCloudPartition = %q, want empty", cfg.SlurmCloudPartition)
 	}
 }
+
+func TestLoadAdminTokenFallsBackToWorkloadWhenRenewalDisabled(t *testing.T) {
+	t.Setenv("SLURM_API_URL", "http://slurm:6820")
+	t.Setenv("SLURM_JWT_TOKEN", "workload-token")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SlurmAdminTokenRenewalEnabled() {
+		t.Fatal("expected admin token renewal disabled when SSH_LOGIN_NODE is unset")
+	}
+	if cfg.SlurmAdminJWTToken != "workload-token" {
+		t.Fatalf("SlurmAdminJWTToken = %q, want workload-token fallback", cfg.SlurmAdminJWTToken)
+	}
+}
+
+func TestLoadAdminTokenRenewalEnabledWithLoginNode(t *testing.T) {
+	t.Setenv("SLURM_API_URL", "http://slurm:6820")
+	t.Setenv("SLURM_JWT_TOKEN", "workload-token")
+	t.Setenv("SLURM_ADMIN_USER", "root")
+	t.Setenv("SSH_LOGIN_NODE", "login-01")
+	t.Setenv("SSH_USER", "slurm")
+
+	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
+	t.Setenv("SSH_PRIVATE_KEY_PATH", keyPath)
+	if err := os.WriteFile(keyPath, []byte("test-key"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.SlurmAdminTokenRenewalEnabled() {
+		t.Fatal("expected admin token renewal enabled when SSH_LOGIN_NODE is set")
+	}
+	if !cfg.SSHRunnerEnabled() {
+		t.Fatal("expected SSH runner enabled when SSH_LOGIN_NODE is set")
+	}
+	// Admin token must not borrow the workload token when renewal is enabled.
+	if cfg.SlurmAdminJWTToken != "" {
+		t.Fatalf("SlurmAdminJWTToken = %q, want empty bootstrap state", cfg.SlurmAdminJWTToken)
+	}
+	if cfg.SlurmAdminTokenLifespan != 600 {
+		t.Fatalf("SlurmAdminTokenLifespan = %d, want default 600", cfg.SlurmAdminTokenLifespan)
+	}
+}
+
+func TestLoadCustomAdminTokenLifespan(t *testing.T) {
+	t.Setenv("SSH_LOGIN_NODE", "login-01")
+	t.Setenv("SLURM_ADMIN_TOKEN_LIFESPAN", "900")
+
+	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
+	t.Setenv("SSH_PRIVATE_KEY_PATH", keyPath)
+	if err := os.WriteFile(keyPath, []byte("test-key"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SlurmAdminTokenLifespan != 900 {
+		t.Fatalf("SlurmAdminTokenLifespan = %d, want 900", cfg.SlurmAdminTokenLifespan)
+	}
+}
+
+func TestLoadInvalidAdminTokenLifespanFallsBackToDefault(t *testing.T) {
+	t.Setenv("SLURM_ADMIN_TOKEN_LIFESPAN", "not-a-number")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SlurmAdminTokenLifespan != 600 {
+		t.Fatalf("SlurmAdminTokenLifespan = %d, want default 600", cfg.SlurmAdminTokenLifespan)
+	}
+}
+
+func TestLoadLoginNodeEnablesSSHRunnerRequiringKey(t *testing.T) {
+	t.Setenv("SSH_LOGIN_NODE", "login-01")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want missing key path error")
+	}
+	if !strings.Contains(err.Error(), "SSH_PRIVATE_KEY_PATH is required") {
+		t.Fatalf("Load() error = %q, want SSH_PRIVATE_KEY_PATH requirement", err)
+	}
+}

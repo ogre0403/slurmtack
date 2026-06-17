@@ -99,15 +99,27 @@ func main() {
 
 	var slurmClient *slurm.RestClient
 	if cfg.SlurmAPIURL != "" {
-		slurmClient = slurm.NewRestClient(
-			cfg.SlurmAPIURL,
-			cfg.SlurmJWTToken,
+		opts := []slurm.Option{
 			slurm.WithLogger(baseLogger),
 			slurm.WithSlurmUser(cfg.SlurmAPIUser),
-			slurm.WithAdminCredentials(cfg.SlurmAdminUser, cfg.SlurmAdminJWTToken),
 			slurm.WithAMQPURL(cfg.AMQPURL),
 			slurm.WithPlaceholderSIFPath(cfg.PlaceholderSIFPath),
-		)
+		}
+		if cfg.SlurmAdminTokenRenewalEnabled() {
+			provider := slurm.NewSSHAdminTokenProvider(slurm.SSHAdminTokenProviderConfig{
+				Runner:         buildSSHRunner(cfg, baseLogger),
+				Store:          sqlStore,
+				AdminUser:      cfg.SlurmAdminUser,
+				LoginNode:      cfg.SSHLoginNode,
+				Lifespan:       cfg.SlurmAdminTokenLifespan,
+				BootstrapToken: cfg.SlurmAdminJWTToken,
+				Logger:         baseLogger,
+			})
+			opts = append(opts, slurm.WithAdminTokenProvider(cfg.SlurmAdminUser, provider))
+		} else {
+			opts = append(opts, slurm.WithAdminCredentials(cfg.SlurmAdminUser, cfg.SlurmAdminJWTToken))
+		}
+		slurmClient = slurm.NewRestClient(cfg.SlurmAPIURL, cfg.SlurmJWTToken, opts...)
 	}
 
 	var osClient openstack.Client

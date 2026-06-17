@@ -54,3 +54,11 @@ CREATE TABLE IF NOT EXISTS leases (
     state_version INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (execution_id) REFERENCES executions(id)
 );
+
+CREATE TABLE IF NOT EXISTS admin_token_renewals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    issued_at DATETIME NOT NULL,
+    admin_user TEXT NOT NULL,
+    login_node TEXT NOT NULL,
+    trigger TEXT NOT NULL
+);

@@ -9,10 +9,12 @@ import (
 )
 
 type MemoryStore struct {
-	mu         sync.Mutex
-	executions map[string]*domain.Execution
-	leases     map[string]*domain.NodeLease
-	steps      map[string][]*domain.StepRecord
+	mu            sync.Mutex
+	executions    map[string]*domain.Execution
+	leases        map[string]*domain.NodeLease
+	steps         map[string][]*domain.StepRecord
+	tokenRenewals []*domain.AdminTokenRenewal
+	nextRenewalID int64
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -173,6 +175,27 @@ func (m *MemoryStore) ListSteps(_ context.Context, executionID string) ([]*domai
 	result := make([]*domain.StepRecord, len(steps))
 	for i, s := range steps {
 		cp := *s
+		result[i] = &cp
+	}
+	return result, nil
+}
+
+func (m *MemoryStore) RecordAdminTokenRenewal(_ context.Context, renewal *domain.AdminTokenRenewal) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nextRenewalID++
+	cp := *renewal
+	cp.ID = m.nextRenewalID
+	m.tokenRenewals = append(m.tokenRenewals, &cp)
+	return nil
+}
+
+func (m *MemoryStore) ListAdminTokenRenewals(_ context.Context) ([]*domain.AdminTokenRenewal, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]*domain.AdminTokenRenewal, len(m.tokenRenewals))
+	for i, r := range m.tokenRenewals {
+		cp := *r
 		result[i] = &cp
 	}
 	return result, nil

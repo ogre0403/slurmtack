@@ -324,6 +324,42 @@ func (s *SQLiteStore) ListSteps(_ context.Context, executionID string) ([]*domai
 	return result, rows.Err()
 }
 
+func (s *SQLiteStore) RecordAdminTokenRenewal(_ context.Context, renewal *domain.AdminTokenRenewal) error {
+	res, err := s.db.Exec(`INSERT INTO admin_token_renewals (
+		issued_at, admin_user, login_node, trigger
+	) VALUES (?, ?, ?, ?)`,
+		renewal.IssuedAt, renewal.AdminUser, renewal.LoginNode, string(renewal.Trigger),
+	)
+	if err != nil {
+		return err
+	}
+	if id, err := res.LastInsertId(); err == nil {
+		renewal.ID = id
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ListAdminTokenRenewals(_ context.Context) ([]*domain.AdminTokenRenewal, error) {
+	rows, err := s.db.Query(`SELECT id, issued_at, admin_user, login_node, trigger
+		FROM admin_token_renewals ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*domain.AdminTokenRenewal
+	for rows.Next() {
+		var r domain.AdminTokenRenewal
+		var trigger string
+		if err := rows.Scan(&r.ID, &r.IssuedAt, &r.AdminUser, &r.LoginNode, &trigger); err != nil {
+			return nil, err
+		}
+		r.Trigger = domain.AdminTokenRenewalTrigger(trigger)
+		result = append(result, &r)
+	}
+	return result, rows.Err()
+}
+
 func scanExecution(row *sql.Row) (*domain.Execution, error) {
 	var exec domain.Execution
 	var lockAcquired, lockReleased, allocEvent sql.NullTime

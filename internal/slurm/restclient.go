@@ -45,6 +45,16 @@ func WithAdminCredentials(user, token string) Option {
 	}
 }
 
+// WithAdminTokenProvider enables SSH-backed admin token renewal. When set, the
+// client resolves the admin token from the provider at request time instead of
+// using the static admin token, and retries once after renewal on auth failure.
+func WithAdminTokenProvider(user string, provider adminTokenProvider) Option {
+	return func(rc *RestClient) {
+		rc.adminUser = user
+		rc.adminTokenProvider = provider
+	}
+}
+
 func WithLogger(logger *slog.Logger) Option {
 	return func(rc *RestClient) {
 		rc.logger = trace.OrDefault(logger).With("component", "slurmrestd_client")
@@ -57,6 +67,7 @@ type RestClient struct {
 	slurmUser          string
 	adminUser          string
 	adminToken         string
+	adminTokenProvider adminTokenProvider
 	logger             *slog.Logger
 	httpClient         *http.Client
 	amqpURL            string
@@ -80,7 +91,9 @@ func NewRestClient(baseURL, jwtToken string, opts ...Option) *RestClient {
 	if rc.adminUser == "" {
 		rc.adminUser = rc.slurmUser
 	}
-	if rc.adminToken == "" {
+	// When SSH-backed renewal is enabled the admin token is resolved at request
+	// time, so do not borrow the static workload token as a fallback.
+	if rc.adminToken == "" && rc.adminTokenProvider == nil {
 		rc.adminToken = rc.jwtToken
 	}
 	return rc
@@ -164,43 +177,58 @@ func (c *RestClient) GetNodeStateWithIdentity(ctx context.Context, nodeName stri
 }
 
 func (c *RestClient) GetNodeState(ctx context.Context, nodeName string) (*NodeState, error) {
-	resp, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/slurm/v0.0.40/node/%s", nodeName), nil)
+	var state *NodeState
+	err := c.doAdminAttempt(ctx, func(user, token string) error {
+		resp, err := c.doRequestWithIdentity(ctx, http.MethodGet, fmt.Sprintf("/slurm/v0.0.40/node/%s", nodeName), nil, "admin", user, token)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		state, err = c.parseNodeStateResponse(resp)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	return c.parseNodeStateResponse(resp)
+	return state, nil
 }
 
 func (c *RestClient) GetNodes(ctx context.Context) ([]NodeState, error) {
-	resp, err := c.doRequest(ctx, http.MethodGet, "/slurm/v0.0.40/nodes", nil)
+	var states []NodeState
+	err := c.doAdminAttempt(ctx, func(user, token string) error {
+		resp, err := c.doRequestWithIdentity(ctx, http.MethodGet, "/slurm/v0.0.40/nodes", nil, "admin", user, token)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		var result nodeInfoResponse
+		if err := c.decodeResponse(resp, &result); err != nil {
+			return err
+		}
+
+		if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
+			return c.apiError(resp.StatusCode, fatalErrs)
+		}
+
+		states = states[:0]
+		for _, node := range result.Nodes {
+			state := NodeState{
+				NodeName: node.Name,
+				State:    strings.Join(node.State, "+"),
+			}
+			if node.Gres != "" {
+				state.GRES = strings.Split(node.Gres, ",")
+			}
+			for _, jid := range node.AllocJobIDs {
+				state.RunningJob = append(state.RunningJob, strconv.Itoa(jid))
+			}
+			states = append(states, state)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result nodeInfoResponse
-	if err := c.decodeResponse(resp, &result); err != nil {
-		return nil, err
-	}
-
-	if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
-		return nil, c.apiError(resp.StatusCode, fatalErrs)
-	}
-
-	var states []NodeState
-	for _, node := range result.Nodes {
-		state := NodeState{
-			NodeName: node.Name,
-			State:    strings.Join(node.State, "+"),
-		}
-		if node.Gres != "" {
-			state.GRES = strings.Split(node.Gres, ",")
-		}
-		for _, jid := range node.AllocJobIDs {
-			state.RunningJob = append(state.RunningJob, strconv.Itoa(jid))
-		}
-		states = append(states, state)
 	}
 	return states, nil
 }
@@ -241,7 +269,7 @@ func (c *RestClient) DrainNode(ctx context.Context, nodeName, reason string) err
 		"state":  []string{"DRAIN"},
 		"reason": reason,
 	}
-	_, err := c.doJSONAdmin(ctx, http.MethodPost, fmt.Sprintf("/slurm/v0.0.40/node/%s", nodeName), body)
+	err := c.doJSONAdmin(ctx, http.MethodPost, fmt.Sprintf("/slurm/v0.0.40/node/%s", nodeName), body)
 	if err != nil {
 		if apiErr, ok := err.(*SlurmAPIError); ok && isDrainIdempotent(apiErr) {
 			return nil
@@ -255,7 +283,7 @@ func (c *RestClient) ResumeNode(ctx context.Context, nodeName string) error {
 	body := map[string]any{
 		"state": []string{"RESUME"},
 	}
-	_, err := c.doJSONAdmin(ctx, http.MethodPost, fmt.Sprintf("/slurm/v0.0.40/node/%s", nodeName), body)
+	err := c.doJSONAdmin(ctx, http.MethodPost, fmt.Sprintf("/slurm/v0.0.40/node/%s", nodeName), body)
 	if err != nil {
 		if apiErr, ok := err.(*SlurmAPIError); ok && isResumeIdempotent(apiErr) {
 			return nil
@@ -297,64 +325,73 @@ func (c *RestClient) VerifyToken(ctx context.Context, user, token string) error 
 }
 
 func (c *RestClient) ListPartitions(ctx context.Context) ([]Partition, error) {
-	resp, err := c.doRequest(ctx, http.MethodGet, "/slurm/v0.0.40/partitions", nil)
+	var partitions []Partition
+	err := c.doAdminAttempt(ctx, func(user, token string) error {
+		resp, err := c.doRequestWithIdentity(ctx, http.MethodGet, "/slurm/v0.0.40/partitions", nil, "admin", user, token)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		var result partitionsResponse
+		if err := c.decodeResponse(resp, &result); err != nil {
+			return err
+		}
+
+		if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
+			return c.apiError(resp.StatusCode, fatalErrs)
+		}
+
+		partitions = partitions[:0]
+		for _, p := range result.Partitions {
+			nodes := expandNodeList(p.Nodes.Configured)
+			partitions = append(partitions, Partition{
+				Name:  p.Name,
+				Nodes: nodes,
+			})
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result partitionsResponse
-	if err := c.decodeResponse(resp, &result); err != nil {
-		return nil, err
-	}
-
-	if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
-		return nil, c.apiError(resp.StatusCode, fatalErrs)
-	}
-
-	var partitions []Partition
-	for _, p := range result.Partitions {
-		nodes := expandNodeList(p.Nodes.Configured)
-		partitions = append(partitions, Partition{
-			Name:  p.Name,
-			Nodes: nodes,
-		})
 	}
 	return partitions, nil
 }
 
 func (c *RestClient) CancelJob(ctx context.Context, jobID string) error {
-	resp, err := c.doRequest(ctx, http.MethodDelete, fmt.Sprintf("/slurm/v0.0.40/job/%s", jobID), nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	return c.doAdminAttempt(ctx, func(user, token string) error {
+		resp, err := c.doRequestWithIdentity(ctx, http.MethodDelete, fmt.Sprintf("/slurm/v0.0.40/job/%s", jobID), nil, "admin", user, token)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
 
-	var result slurmErrorResponse
-	if err := c.decodeResponse(resp, &result); err != nil {
-		return err
-	}
+		var result slurmErrorResponse
+		if err := c.decodeResponse(resp, &result); err != nil {
+			return err
+		}
 
-	if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
-		return c.apiError(resp.StatusCode, fatalErrs)
-	}
+		if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
+			return c.apiError(resp.StatusCode, fatalErrs)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // terminalJobStates is the set of Slurm job states that are considered terminal.
 var terminalJobStates = map[string]struct{}{
-	"BOOT_FAIL":  {},
-	"CANCELLED":  {},
-	"COMPLETED":  {},
-	"DEADLINE":   {},
-	"FAILED":     {},
-	"NODE_FAIL":  {},
+	"BOOT_FAIL":     {},
+	"CANCELLED":     {},
+	"COMPLETED":     {},
+	"DEADLINE":      {},
+	"FAILED":        {},
+	"NODE_FAIL":     {},
 	"OUT_OF_MEMORY": {},
-	"PREEMPTED":  {},
-	"REVOKED":    {},
-	"SPECIAL_EXIT": {},
-	"TIMEOUT":    {},
+	"PREEMPTED":     {},
+	"REVOKED":       {},
+	"SPECIAL_EXIT":  {},
+	"TIMEOUT":       {},
 }
 
 func (c *RestClient) GetJobState(ctx context.Context, jobID string, id WorkloadIdentity) (*JobState, error) {
@@ -417,24 +454,45 @@ func marshalBody(body any) io.Reader {
 	return bytes.NewReader(data)
 }
 
-func (c *RestClient) doJSON(ctx context.Context, method, path string, body any) (*http.Response, error) {
+func (c *RestClient) doJSONAdmin(ctx context.Context, method, path string, body any) error {
 	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling request body: %w", err)
+		return fmt.Errorf("marshaling request body: %w", err)
 	}
-	return c.doRequest(ctx, method, path, bytes.NewReader(data))
+	return c.doAdminAttempt(ctx, func(user, token string) error {
+		resp, err := c.doRequestWithIdentity(ctx, method, path, bytes.NewReader(data), "admin", user, token)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		return nil
+	})
 }
 
-func (c *RestClient) doJSONAdmin(ctx context.Context, method, path string, body any) (*http.Response, error) {
-	data, err := json.Marshal(body)
+// doAdminAttempt resolves the effective admin identity and runs fn. When an
+// SSH-backed token provider is configured and fn fails authentication, it
+// renews the admin token once and retries fn a single time. Non-auth failures
+// are returned immediately without renewal.
+func (c *RestClient) doAdminAttempt(ctx context.Context, fn func(user, token string) error) error {
+	if c.adminTokenProvider == nil {
+		return fn(c.adminUser, c.adminToken)
+	}
+
+	token, err := c.adminTokenProvider.Token(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling request body: %w", err)
+		return err
 	}
-	return c.doRequestWithIdentity(ctx, method, path, bytes.NewReader(data), "admin", c.adminUser, c.adminToken)
-}
 
-func (c *RestClient) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
-	return c.doRequestWithIdentity(ctx, method, path, body, "admin", c.adminUser, c.adminToken)
+	err = fn(c.adminUser, token)
+	if err == nil || !isAuthFailure(err) {
+		return err
+	}
+
+	renewed, renewErr := c.adminTokenProvider.Renew(ctx, token)
+	if renewErr != nil {
+		return renewErr
+	}
+	return fn(c.adminUser, renewed)
 }
 
 func (c *RestClient) doRequestWithIdentity(ctx context.Context, method, path string, body io.Reader, identity, slurmUser, slurmToken string) (*http.Response, error) {

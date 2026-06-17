@@ -35,4 +35,9 @@ type Store interface {
 	CreateStep(ctx context.Context, step *domain.StepRecord) error
 	UpdateStep(ctx context.Context, step *domain.StepRecord) error
 	ListSteps(ctx context.Context, executionID string) ([]*domain.StepRecord, error)
+
+	// RecordAdminTokenRenewal persists one audit record for an SSH-minted Slurm
+	// admin token issuance. The record never contains the token material itself.
+	RecordAdminTokenRenewal(ctx context.Context, renewal *domain.AdminTokenRenewal) error
+	ListAdminTokenRenewals(ctx context.Context) ([]*domain.AdminTokenRenewal, error)
 }

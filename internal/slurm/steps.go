@@ -16,7 +16,7 @@ func NewQuiesceHandler(c Client) *QuiesceHandler {
 	return &QuiesceHandler{client: c}
 }
 
-func (h *QuiesceHandler) Name() string    { return "slurm_quiesce" }
+func (h *QuiesceHandler) Name() string { return "slurm_quiesce" }
 func (h *QuiesceHandler) Quiesce(ctx context.Context, exec *domain.Execution) error {
 	return h.Execute(ctx, exec)
 }

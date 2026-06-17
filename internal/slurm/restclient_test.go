@@ -486,6 +486,141 @@ func TestRequestLogTransportError(t *testing.T) {
 	assertNoSensitiveValues(t, rec, "secret-token")
 }
 
+// fakeAdminTokenProvider scripts token issuance for admin-request tests.
+type fakeAdminTokenProvider struct {
+	tokens     []string
+	tokenCalls int
+	renewCalls int
+}
+
+func (p *fakeAdminTokenProvider) next() string {
+	idx := p.tokenCalls + p.renewCalls - 1
+	if idx >= len(p.tokens) {
+		idx = len(p.tokens) - 1
+	}
+	return p.tokens[idx]
+}
+
+func (p *fakeAdminTokenProvider) Token(_ context.Context) (string, error) {
+	p.tokenCalls++
+	return p.next(), nil
+}
+
+func (p *fakeAdminTokenProvider) Renew(_ context.Context, _ string) (string, error) {
+	p.renewCalls++
+	return p.next(), nil
+}
+
+func TestAdminRequestRetriesOnceAfterAuthFailure(t *testing.T) {
+	var sentTokens []string
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sentTokens = append(sentTokens, r.Header.Get("X-SLURM-USER-TOKEN"))
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(slurmErrorResponse{Errors: []slurmError{{Error: "Invalid token", Errno: 9001}}})
+			return
+		}
+		json.NewEncoder(w).Encode(slurmErrorResponse{})
+	}))
+	defer srv.Close()
+
+	provider := &fakeAdminTokenProvider{tokens: []string{"stale-token", "fresh-token"}}
+	client := NewRestClient(srv.URL, "workload-token", WithAdminTokenProvider("root", provider))
+
+	if err := client.DrainNode(context.Background(), "gpu-01", "switch"); err != nil {
+		t.Fatalf("DrainNode() error = %v", err)
+	}
+
+	if calls != 2 {
+		t.Fatalf("server calls = %d, want 2 (one retry)", calls)
+	}
+	if provider.renewCalls != 1 {
+		t.Fatalf("renew calls = %d, want 1", provider.renewCalls)
+	}
+	if len(sentTokens) != 2 || sentTokens[0] != "stale-token" || sentTokens[1] != "fresh-token" {
+		t.Fatalf("sent tokens = %v, want [stale-token fresh-token]", sentTokens)
+	}
+}
+
+func TestAdminRequestReturnsErrorAfterRepeatedAuthFailure(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(slurmErrorResponse{Errors: []slurmError{{Error: "Invalid token", Errno: 9001}}})
+	}))
+	defer srv.Close()
+
+	provider := &fakeAdminTokenProvider{tokens: []string{"t1", "t2"}}
+	client := NewRestClient(srv.URL, "workload-token", WithAdminTokenProvider("root", provider))
+
+	err := client.CancelJob(context.Background(), "42")
+	if err == nil {
+		t.Fatal("expected error after repeated auth failure")
+	}
+	apiErr, ok := err.(*SlurmAPIError)
+	if !ok {
+		t.Fatalf("expected SlurmAPIError, got %T", err)
+	}
+	if apiErr.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", apiErr.StatusCode)
+	}
+	if calls != 2 {
+		t.Fatalf("server calls = %d, want 2 (single retry, no further retries)", calls)
+	}
+	if provider.renewCalls != 1 {
+		t.Fatalf("renew calls = %d, want 1", provider.renewCalls)
+	}
+}
+
+func TestAdminRequestDoesNotRetryNonAuthFailure(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(slurmErrorResponse{Errors: []slurmError{{Error: "invalid node state", Errno: 2}}})
+	}))
+	defer srv.Close()
+
+	provider := &fakeAdminTokenProvider{tokens: []string{"t1", "t2"}}
+	client := NewRestClient(srv.URL, "workload-token", WithAdminTokenProvider("root", provider))
+
+	err := client.ResumeNode(context.Background(), "gpu-01")
+	if err == nil {
+		t.Fatal("expected error for non-auth failure")
+	}
+	if calls != 1 {
+		t.Fatalf("server calls = %d, want 1 (no retry)", calls)
+	}
+	if provider.renewCalls != 0 {
+		t.Fatalf("renew calls = %d, want 0 for non-auth failure", provider.renewCalls)
+	}
+}
+
+func TestAdminRequestSucceedsWithCachedToken(t *testing.T) {
+	var sentToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sentToken = r.Header.Get("X-SLURM-USER-TOKEN")
+		json.NewEncoder(w).Encode(slurmErrorResponse{})
+	}))
+	defer srv.Close()
+
+	provider := &fakeAdminTokenProvider{tokens: []string{"cached-token"}}
+	client := NewRestClient(srv.URL, "workload-token", WithAdminTokenProvider("root", provider))
+
+	if err := client.DrainNode(context.Background(), "gpu-01", "switch"); err != nil {
+		t.Fatalf("DrainNode() error = %v", err)
+	}
+	if sentToken != "cached-token" {
+		t.Fatalf("sent token = %q, want cached-token", sentToken)
+	}
+	if provider.renewCalls != 0 {
+		t.Fatalf("renew calls = %d, want 0 on success", provider.renewCalls)
+	}
+}
+
 func assertSlurmHeaders(t *testing.T, r *http.Request, expectedUser, expectedToken string) {
 	t.Helper()
 	user := r.Header.Get("X-SLURM-USER-NAME")
