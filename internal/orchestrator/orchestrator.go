@@ -212,11 +212,19 @@ func (o *Orchestrator) nextStep(exec *domain.Execution, previousState domain.Swi
 		if exec.Direction == domain.DirectionOpenStackToSlurm && exec.CurrentState == domain.StateSourceQuiescing {
 			return o.localPollInterval(), true
 		}
+		if exec.CurrentState == domain.StateAwaitingSourceAllocation && exec.PlaceholderJobID != "" {
+			return o.localPollInterval(), true
+		}
 		return 0, false
 	}
 
 	switch exec.CurrentState {
-	case domain.StateAwaitingSourceAllocation, domain.StateAwaitingTargetNode:
+	case domain.StateAwaitingSourceAllocation:
+		if exec.PlaceholderJobID != "" {
+			return o.localPollInterval(), true
+		}
+		return 0, false
+	case domain.StateAwaitingTargetNode:
 		return 0, false
 	case domain.StateSourceQuiescing:
 		if exec.Direction == domain.DirectionOpenStackToSlurm {
@@ -253,6 +261,8 @@ func waitForNextPoll(ctx context.Context, delay time.Duration) error {
 
 func (o *Orchestrator) shouldRecover(exec *domain.Execution) bool {
 	switch exec.CurrentState {
+	case domain.StateAwaitingSourceAllocation:
+		return exec.PlaceholderJobID != ""
 	case domain.StateNodeIdentified,
 		domain.StateLocked,
 		domain.StatePrecheckPassed,
@@ -275,6 +285,8 @@ func actionName(a action) string {
 	switch a {
 	case actionSubmitPlaceholder:
 		return "submit_placeholder"
+	case actionMonitorPlaceholder:
+		return "monitor_placeholder"
 	case actionAcquireLease:
 		return "acquire_lease"
 	case actionPrecheck:
@@ -343,6 +355,7 @@ type action int
 const (
 	actionNone action = iota
 	actionSubmitPlaceholder
+	actionMonitorPlaceholder
 	actionAcquireLease
 	actionPrecheck
 	actionAcquireLeaseAndPrecheck
@@ -375,7 +388,10 @@ func (o *Orchestrator) determineS2O(exec *domain.Execution) action {
 	case domain.StateRequested:
 		return actionSubmitPlaceholder
 	case domain.StateAwaitingSourceAllocation:
-		return actionNone // waiting for MQ event
+		if exec.PlaceholderJobID != "" {
+			return actionMonitorPlaceholder
+		}
+		return actionNone
 	case domain.StateNodeIdentified:
 		return actionAcquireLeaseAndPrecheck
 	case domain.StateLocked:
@@ -434,6 +450,8 @@ func (o *Orchestrator) executeAction(ctx context.Context, exec *domain.Execution
 	switch a {
 	case actionSubmitPlaceholder:
 		return o.doSubmitPlaceholder(ctx, exec)
+	case actionMonitorPlaceholder:
+		return o.doMonitorPlaceholder(ctx, exec)
 	case actionAcquireLease:
 		return o.doAcquireLease(ctx, exec)
 	case actionAcquireLeaseAndPrecheck:
@@ -514,6 +532,53 @@ func (o *Orchestrator) doSubmitPlaceholder(ctx context.Context, exec *domain.Exe
 	}
 	_, _ = o.steps.StartStep(ctx, exec.ID, domain.StepWaitForSourceAllocation, exec.NodeName)
 	return nil
+}
+
+func (o *Orchestrator) doMonitorPlaceholder(ctx context.Context, exec *domain.Execution) error {
+	if o.slurm == nil {
+		return nil
+	}
+
+	id := slurm.WorkloadIdentity{
+		User:  exec.SlurmWorkloadUser,
+		Token: exec.SlurmWorkloadToken,
+	}
+	jobState, err := o.slurm.GetJobState(ctx, exec.PlaceholderJobID, id)
+	if err != nil {
+		if slurm.IsJobNotFound(err) {
+			summary := fmt.Sprintf("placeholder job %s not found while waiting for allocation", exec.PlaceholderJobID)
+			return o.failAllocationWait(ctx, exec, summary)
+		}
+		// transient Slurm error — log and retry on next tick
+		trace.ForExecution(o.logger, exec).Warn("monitor_placeholder.job_state_error",
+			"job_id", exec.PlaceholderJobID, "error", err.Error())
+		return nil
+	}
+
+	if !jobState.IsTerminal {
+		return nil
+	}
+
+	// Re-read the execution to guard against a concurrent MQ allocation event
+	// that may have already advanced the state to node_identified. If the
+	// allocation event won the race, this poll is a harmless no-op.
+	fresh, err := o.store.GetExecution(ctx, exec.ID)
+	if err != nil {
+		return err
+	}
+	if fresh.CurrentState != domain.StateAwaitingSourceAllocation {
+		return nil
+	}
+
+	summary := fmt.Sprintf("placeholder job %s reached terminal state %s before allocation event", exec.PlaceholderJobID, jobState.State)
+	return o.failAllocationWait(ctx, fresh, summary)
+}
+
+func (o *Orchestrator) failAllocationWait(ctx context.Context, exec *domain.Execution, summary string) error {
+	_ = o.steps.CloseRunningStep(ctx, exec.ID, domain.StepStatusFailed,
+		engine.WithErrorClass(domain.FailurePrecheckBlocked),
+		engine.WithErrorSummary(summary))
+	return o.runner.FailExecution(ctx, exec.ID, domain.FailurePrecheckBlocked, "placeholder_job_failed", summary)
 }
 
 func (o *Orchestrator) doAcquireLease(ctx context.Context, exec *domain.Execution) error {

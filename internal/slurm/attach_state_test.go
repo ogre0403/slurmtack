@@ -52,6 +52,10 @@ func (c *captureAttachClient) GetNodes(_ context.Context) ([]NodeState, error) {
 	return nil, nil
 }
 
+func (c *captureAttachClient) GetJobState(_ context.Context, _ string, _ WorkloadIdentity) (*JobState, error) {
+	return nil, nil
+}
+
 func (c *captureAttachClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 
 func TestAttachHandlerExecuteGuardedResume(t *testing.T) {

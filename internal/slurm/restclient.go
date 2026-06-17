@@ -342,6 +342,57 @@ func (c *RestClient) CancelJob(ctx context.Context, jobID string) error {
 	return nil
 }
 
+// terminalJobStates is the set of Slurm job states that are considered terminal.
+var terminalJobStates = map[string]struct{}{
+	"BOOT_FAIL":  {},
+	"CANCELLED":  {},
+	"COMPLETED":  {},
+	"DEADLINE":   {},
+	"FAILED":     {},
+	"NODE_FAIL":  {},
+	"OUT_OF_MEMORY": {},
+	"PREEMPTED":  {},
+	"REVOKED":    {},
+	"SPECIAL_EXIT": {},
+	"TIMEOUT":    {},
+}
+
+func (c *RestClient) GetJobState(ctx context.Context, jobID string, id WorkloadIdentity) (*JobState, error) {
+	resp, err := c.doRequestWithIdentity(ctx, http.MethodGet, fmt.Sprintf("/slurm/v0.0.40/job/%s", jobID), nil, "workload", id.User, id.Token)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result jobStateResponse
+	if err := c.decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+
+	if fatalErrs := filterFatalErrors(result.Errors); len(fatalErrs) > 0 {
+		return nil, c.apiError(resp.StatusCode, fatalErrs)
+	}
+
+	if len(result.Jobs) == 0 {
+		return nil, &SlurmAPIError{StatusCode: 404, Messages: []string{"job not found"}}
+	}
+
+	// job_state is an array; join with "+" like node state (e.g. "FAILED+COMPLETING").
+	// Check each element individually against the terminal set.
+	rawState := strings.Join(result.Jobs[0].JobState, "+")
+	isTerminal := false
+	for _, s := range result.Jobs[0].JobState {
+		if _, ok := terminalJobStates[s]; ok {
+			isTerminal = true
+			break
+		}
+	}
+	return &JobState{
+		State:      rawState,
+		IsTerminal: isTerminal,
+	}, nil
+}
+
 func (c *RestClient) CancelJobWithIdentity(ctx context.Context, jobID string, id WorkloadIdentity) error {
 	resp, err := c.doRequestWithIdentity(ctx, http.MethodDelete, fmt.Sprintf("/slurm/v0.0.40/job/%s", jobID), nil, "workload", id.User, id.Token)
 	if err != nil {

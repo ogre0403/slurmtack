@@ -82,6 +82,10 @@ func (f *FakeSlurmClient) GetNodes(_ context.Context) ([]slurm.NodeState, error)
 	return list, nil
 }
 
+func (f *FakeSlurmClient) GetJobState(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.JobState, error) {
+	return nil, nil
+}
+
 func (f *FakeSlurmClient) VerifyToken(_ context.Context, _, _ string) error {
 	return nil
 }

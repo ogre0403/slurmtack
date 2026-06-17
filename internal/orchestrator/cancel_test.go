@@ -58,6 +58,10 @@ func (f *fakeSlurmCancelClient) GetNodes(_ context.Context) ([]slurm.NodeState, 
 	return nil, nil
 }
 
+func (f *fakeSlurmCancelClient) GetJobState(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.JobState, error) {
+	return nil, nil
+}
+
 func (f *fakeSlurmCancelClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 
 func newCancellingExec(direction domain.SwitchDirection, sourceState domain.SwitchState, jobID string) *domain.Execution {

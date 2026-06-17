@@ -55,6 +55,9 @@ func (f *fakeSlurmInventoryClient) CancelJob(_ context.Context, _ string) error 
 func (f *fakeSlurmInventoryClient) CancelJobWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) error {
 	return nil
 }
+func (f *fakeSlurmInventoryClient) GetJobState(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.JobState, error) {
+	return nil, nil
+}
 func (f *fakeSlurmInventoryClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 
 type fakeOSInventoryClient struct {

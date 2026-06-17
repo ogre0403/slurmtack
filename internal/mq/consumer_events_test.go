@@ -58,6 +58,10 @@ func (f *fakeAdmissionSlurmClient) GetNodes(_ context.Context) ([]slurm.NodeStat
 	return nil, nil
 }
 
+func (f *fakeAdmissionSlurmClient) GetJobState(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.JobState, error) {
+	return nil, nil
+}
+
 func (f *fakeAdmissionSlurmClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 
 type ackRecorder struct {

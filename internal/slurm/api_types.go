@@ -43,3 +43,13 @@ type partitionInfo struct {
 type partitionNodes struct {
 	Configured string `json:"configured"`
 }
+
+type jobStateResponse struct {
+	Jobs   []jobInfo    `json:"jobs"`
+	Errors []slurmError `json:"errors"`
+}
+
+type jobInfo struct {
+	JobID    int      `json:"job_id"`
+	JobState []string `json:"job_state"`
+}

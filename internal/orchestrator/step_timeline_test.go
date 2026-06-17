@@ -55,6 +55,10 @@ func (f *fakeStepSlurmClient) GetNodes(_ context.Context) ([]slurm.NodeState, er
 	return nil, nil
 }
 
+func (f *fakeStepSlurmClient) GetJobState(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.JobState, error) {
+	return nil, nil
+}
+
 func (f *fakeStepSlurmClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 
 func setupStepOrchestrator(t *testing.T, exec *domain.Execution, slurmClient slurm.Client, osClient *fakeOpenStackClient) (*Orchestrator, store.Store) {

@@ -33,6 +33,11 @@ type WorkloadIdentity struct {
 	Token string
 }
 
+type JobState struct {
+	State      string
+	IsTerminal bool
+}
+
 type Client interface {
 	SubmitPlaceholderJob(ctx context.Context, req PlaceholderJobRequest) (*PlaceholderJobResult, error)
 	GetNodeState(ctx context.Context, nodeName string) (*NodeState, error)
@@ -42,6 +47,7 @@ type Client interface {
 	ResumeNode(ctx context.Context, nodeName string) error
 	CancelJob(ctx context.Context, jobID string) error
 	CancelJobWithIdentity(ctx context.Context, jobID string, id WorkloadIdentity) error
+	GetJobState(ctx context.Context, jobID string, id WorkloadIdentity) (*JobState, error)
 	ListPartitions(ctx context.Context) ([]Partition, error)
 	VerifyToken(ctx context.Context, user, token string) error
 }

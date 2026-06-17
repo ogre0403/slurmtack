@@ -348,6 +348,55 @@
   };
 
   // Detail drawer
+  function buildDetailHtml(exec, steps) {
+    var html = '<div class="meta">';
+    html += '<p class="exec-current-state"><strong>Current State:</strong> ' + escapeHtml(exec.current_state) + '</p>';
+    html += '<p><strong>Status:</strong> ' + escapeHtml(exec.overall_status) + '</p>';
+    html += '<p><strong>Direction:</strong> ' + escapeHtml(exec.direction) + '</p>';
+    html += '<p><strong>Node:</strong> ' + escapeHtml(exec.node_name || '(pending)') + '</p>';
+    html += '<p><strong>Requested:</strong> ' + formatTime(exec.requested_at) + '</p>';
+    html += '<p><strong>By:</strong> ' + escapeHtml(exec.requested_by) + '</p>';
+    if (exec.error_summary) html += '<p><strong>Error:</strong> ' + escapeHtml(exec.error_summary) + '</p>';
+    html += '</div>';
+
+    html += '<h3 style="margin-top:16px;font-size:0.9rem;">Steps</h3>';
+    html += '<ul class="step-timeline">';
+    if (Array.isArray(steps)) {
+      steps.forEach(function (s) {
+        html += '<li>';
+        var waitClass = isWaitStep(s.step_name) ? ' step-wait' : ' step-action';
+        var runningWait = (s.status === 'running' && isWaitStep(s.step_name)) ? ' step-active-wait' : '';
+        html += '<div class="step-header' + waitClass + runningWait + '">';
+        html += '<span class="step-seq">#' + s.sequence + '</span>';
+        html += '<span class="step-status ' + escapeAttr(s.status) + '">' + escapeHtml(s.status) + '</span>';
+        html += '<span class="step-name">' + escapeHtml(formatStepName(s.step_name)) + '</span>';
+        html += '</div>';
+        var meta = [];
+        if (s.host) meta.push('<span>⌂ ' + escapeHtml(s.host) + '</span>');
+        if (s.started_at) meta.push('<span>▶ ' + formatTime(s.started_at) + '</span>');
+        if (s.ended_at) {
+          meta.push('<span>■ ' + formatTime(s.ended_at) + '</span>');
+          var dur = calcDuration(s.started_at, s.ended_at);
+          if (dur) meta.push('<span>⏱ ' + dur + '</span>');
+        }
+        if (s.retry_count > 0) meta.push('<span>retry: ' + s.retry_count + '</span>');
+        if (s.exit_code !== null && s.exit_code !== undefined) meta.push('<span>exit: ' + s.exit_code + '</span>');
+        if (meta.length) html += '<div class="step-meta">' + meta.join('') + '</div>';
+        if (s.error_class) html += '<div class="step-error">' + escapeHtml(s.error_class) + '</div>';
+        if (s.error_summary) html += '<div class="step-error-summary">' + escapeHtml(s.error_summary) + '</div>';
+        var paths = [];
+        if (s.stdout_path) paths.push('stdout: ' + s.stdout_path);
+        if (s.stderr_path) paths.push('stderr: ' + s.stderr_path);
+        if (s.snapshot_before_path) paths.push('snap-before: ' + s.snapshot_before_path);
+        if (s.snapshot_after_path) paths.push('snap-after: ' + s.snapshot_after_path);
+        if (paths.length) html += '<div class="step-paths">' + escapeHtml(paths.join(' | ')) + '</div>';
+        html += '</li>';
+      });
+    }
+    html += '</ul>';
+    return html;
+  }
+
   async function openDetail(id) {
     var drawer = document.getElementById('detail-drawer');
     var title = document.getElementById('detail-title');
@@ -363,56 +412,29 @@
       ]);
       var exec = await execRes.json();
       var steps = await stepsRes.json();
-
-      var html = '<div class="meta">';
-      html += '<p class="exec-current-state"><strong>Current State:</strong> ' + escapeHtml(exec.current_state) + '</p>';
-      html += '<p><strong>Status:</strong> ' + escapeHtml(exec.overall_status) + '</p>';
-      html += '<p><strong>Direction:</strong> ' + escapeHtml(exec.direction) + '</p>';
-      html += '<p><strong>Node:</strong> ' + escapeHtml(exec.node_name || '(pending)') + '</p>';
-      html += '<p><strong>Requested:</strong> ' + formatTime(exec.requested_at) + '</p>';
-      html += '<p><strong>By:</strong> ' + escapeHtml(exec.requested_by) + '</p>';
-      if (exec.error_summary) html += '<p><strong>Error:</strong> ' + escapeHtml(exec.error_summary) + '</p>';
-      html += '</div>';
-
-      html += '<h3 style="margin-top:16px;font-size:0.9rem;">Steps</h3>';
-      html += '<ul class="step-timeline">';
-      if (Array.isArray(steps)) {
-        steps.forEach(function (s) {
-          html += '<li>';
-          var waitClass = isWaitStep(s.step_name) ? ' step-wait' : ' step-action';
-          var runningWait = (s.status === 'running' && isWaitStep(s.step_name)) ? ' step-active-wait' : '';
-          html += '<div class="step-header' + waitClass + runningWait + '">';
-          html += '<span class="step-seq">#' + s.sequence + '</span>';
-          html += '<span class="step-status ' + escapeAttr(s.status) + '">' + escapeHtml(s.status) + '</span>';
-          html += '<span class="step-name">' + escapeHtml(formatStepName(s.step_name)) + '</span>';
-          html += '</div>';
-          var meta = [];
-          if (s.host) meta.push('<span>⌂ ' + escapeHtml(s.host) + '</span>');
-          if (s.started_at) meta.push('<span>▶ ' + formatTime(s.started_at) + '</span>');
-          if (s.ended_at) {
-            meta.push('<span>■ ' + formatTime(s.ended_at) + '</span>');
-            var dur = calcDuration(s.started_at, s.ended_at);
-            if (dur) meta.push('<span>⏱ ' + dur + '</span>');
-          }
-          if (s.retry_count > 0) meta.push('<span>retry: ' + s.retry_count + '</span>');
-          if (s.exit_code !== null && s.exit_code !== undefined) meta.push('<span>exit: ' + s.exit_code + '</span>');
-          if (meta.length) html += '<div class="step-meta">' + meta.join('') + '</div>';
-          if (s.error_class) html += '<div class="step-error">' + escapeHtml(s.error_class) + '</div>';
-          if (s.error_summary) html += '<div class="step-error-summary">' + escapeHtml(s.error_summary) + '</div>';
-          var paths = [];
-          if (s.stdout_path) paths.push('stdout: ' + s.stdout_path);
-          if (s.stderr_path) paths.push('stderr: ' + s.stderr_path);
-          if (s.snapshot_before_path) paths.push('snap-before: ' + s.snapshot_before_path);
-          if (s.snapshot_after_path) paths.push('snap-after: ' + s.snapshot_after_path);
-          if (paths.length) html += '<div class="step-paths">' + escapeHtml(paths.join(' | ')) + '</div>';
-          html += '</li>';
-        });
-      }
-      html += '</ul>';
-      content.innerHTML = html;
+      content.innerHTML = buildDetailHtml(exec, steps);
     } catch (e) {
       content.innerHTML = 'Failed to load details.';
     }
+  }
+
+  async function refreshSelectedDetail() {
+    var id = state.selectedExecutionId;
+    if (!id) return;
+    var drawer = document.getElementById('detail-drawer');
+    if (!drawer || !drawer.classList.contains('open')) return;
+
+    try {
+      var [execRes, stepsRes] = await Promise.all([
+        authFetch('/v1/switches/' + encodeURIComponent(id), { headers: authHeaders() }),
+        authFetch('/v1/switches/' + encodeURIComponent(id) + '/steps', { headers: authHeaders() })
+      ]);
+      if (!execRes.ok || !stepsRes.ok) return;
+      var exec = await execRes.json();
+      var steps = await stepsRes.json();
+      var content = document.getElementById('detail-content');
+      if (content) content.innerHTML = buildDetailHtml(exec, steps);
+    } catch (e) { /* silent — preserve current content on transient errors */ }
   }
 
   window.closeDetail = function () {
@@ -758,4 +780,5 @@
   setInterval(checkHealth, 30000);
   setInterval(function () { if (state.token) loadInventory(state.selectedPartition); }, 30000);
   setInterval(function () { if (state.token) loadExecutions(state.execPage); }, 30000);
+  setInterval(function () { if (state.token) refreshSelectedDetail(); }, 30000);
 })();

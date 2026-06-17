@@ -52,6 +52,10 @@ func (f *capturePlaceholderSlurmClient) GetNodes(_ context.Context) ([]slurm.Nod
 	return nil, nil
 }
 
+func (f *capturePlaceholderSlurmClient) GetJobState(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.JobState, error) {
+	return nil, nil
+}
+
 func (f *capturePlaceholderSlurmClient) VerifyToken(_ context.Context, _, _ string) error {
 	return nil
 }

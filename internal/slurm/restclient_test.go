@@ -635,3 +635,131 @@ func TestSubmitPlaceholderJob_NoAccountOmitsField(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestGetJobState_NonTerminal(t *testing.T) {
+	for _, state := range []string{"PENDING", "RUNNING", "CONFIGURING"} {
+		state := state
+		t.Run(state, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/slurm/v0.0.40/job/12345" {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				assertSlurmHeaders(t, r, "alice", "workload-token")
+				json.NewEncoder(w).Encode(jobStateResponse{
+					Jobs: []jobInfo{{JobID: 12345, JobState: []string{state}}},
+				})
+			}))
+			defer srv.Close()
+
+			client := NewRestClient(srv.URL, "daemon-token")
+			result, err := client.GetJobState(context.Background(), "12345", WorkloadIdentity{User: "alice", Token: "workload-token"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.State != state {
+				t.Errorf("State = %q, want %q", result.State, state)
+			}
+			if result.IsTerminal {
+				t.Errorf("IsTerminal = true, want false for state %q", state)
+			}
+		})
+	}
+}
+
+func TestGetJobState_TerminalFailure(t *testing.T) {
+	for _, state := range []string{"FAILED", "BOOT_FAIL", "CANCELLED", "TIMEOUT", "NODE_FAIL"} {
+		state := state
+		t.Run(state, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertSlurmHeaders(t, r, "alice", "workload-token")
+				json.NewEncoder(w).Encode(jobStateResponse{
+					Jobs: []jobInfo{{JobID: 12345, JobState: []string{state}}},
+				})
+			}))
+			defer srv.Close()
+
+			client := NewRestClient(srv.URL, "daemon-token")
+			result, err := client.GetJobState(context.Background(), "12345", WorkloadIdentity{User: "alice", Token: "workload-token"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.State != state {
+				t.Errorf("State = %q, want %q", result.State, state)
+			}
+			if !result.IsTerminal {
+				t.Errorf("IsTerminal = false, want true for state %q", state)
+			}
+		})
+	}
+}
+
+func TestGetJobState_TerminalCompleted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertSlurmHeaders(t, r, "alice", "workload-token")
+		json.NewEncoder(w).Encode(jobStateResponse{
+			Jobs: []jobInfo{{JobID: 12345, JobState: []string{"COMPLETED"}}},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewRestClient(srv.URL, "daemon-token")
+	result, err := client.GetJobState(context.Background(), "12345", WorkloadIdentity{User: "alice", Token: "workload-token"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.State != "COMPLETED" {
+		t.Errorf("State = %q, want COMPLETED", result.State)
+	}
+	if !result.IsTerminal {
+		t.Error("IsTerminal = false, want true for COMPLETED")
+	}
+}
+
+func TestGetJobState_SlurmAPIRejection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(slurmErrorResponse{
+			Errors: []slurmError{{Error: "job not found", Errno: 2}},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewRestClient(srv.URL, "daemon-token")
+	_, err := client.GetJobState(context.Background(), "99999", WorkloadIdentity{User: "alice", Token: "workload-token"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	apiErr, ok := err.(*SlurmAPIError)
+	if !ok {
+		t.Fatalf("expected SlurmAPIError, got %T", err)
+	}
+	if apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", apiErr.StatusCode)
+	}
+}
+
+func TestGetJobState_UsesWorkloadIdentityHeaders(t *testing.T) {
+	var receivedUser, receivedToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUser = r.Header.Get("X-SLURM-USER-NAME")
+		receivedToken = r.Header.Get("X-SLURM-USER-TOKEN")
+		json.NewEncoder(w).Encode(jobStateResponse{
+			Jobs: []jobInfo{{JobID: 1, JobState: []string{"RUNNING"}}},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewRestClient(srv.URL, "daemon-token",
+		WithAdminCredentials("root", "admin-token"),
+	)
+	_, err := client.GetJobState(context.Background(), "1", WorkloadIdentity{User: "alice", Token: "alice-jwt"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if receivedUser != "alice" {
+		t.Errorf("X-SLURM-USER-NAME = %q, want alice", receivedUser)
+	}
+	if receivedToken != "alice-jwt" {
+		t.Errorf("X-SLURM-USER-TOKEN = %q, want alice-jwt", receivedToken)
+	}
+}

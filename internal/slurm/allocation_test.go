@@ -50,6 +50,10 @@ func (f *captureAllocationClient) GetNodes(_ context.Context) ([]NodeState, erro
 	return nil, nil
 }
 
+func (f *captureAllocationClient) GetJobState(_ context.Context, _ string, _ WorkloadIdentity) (*JobState, error) {
+	return nil, nil
+}
+
 func (f *captureAllocationClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 
 func TestAllocationHandlerSubmitPlaceholderUsesRequestedPartition(t *testing.T) {

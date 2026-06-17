@@ -37,6 +37,9 @@ func (f *fakeSlurmVerifier) CancelJob(_ context.Context, _ string) error    { re
 func (f *fakeSlurmVerifier) CancelJobWithIdentity(_ context.Context, _ string, _ slurm.WorkloadIdentity) error {
 	return nil
 }
+func (f *fakeSlurmVerifier) GetJobState(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.JobState, error) {
+	return nil, nil
+}
 func (f *fakeSlurmVerifier) ListPartitions(_ context.Context) ([]slurm.Partition, error) {
 	return nil, nil
 }

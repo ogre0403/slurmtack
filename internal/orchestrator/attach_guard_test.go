@@ -57,6 +57,10 @@ func (c *attachTestSlurmClient) GetNodes(_ context.Context) ([]slurm.NodeState, 
 	return nil, nil
 }
 
+func (c *attachTestSlurmClient) GetJobState(_ context.Context, _ string, _ slurm.WorkloadIdentity) (*slurm.JobState, error) {
+	return nil, nil
+}
+
 func (c *attachTestSlurmClient) VerifyToken(_ context.Context, _, _ string) error { return nil }
 
 func TestDoAttachGuardsResumeForOpenStackToSlurm(t *testing.T) {

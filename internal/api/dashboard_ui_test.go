@@ -739,6 +739,112 @@ func TestDashboardHTML_StepTimelineStyles(t *testing.T) {
 	}
 }
 
+func TestDashboardJS_RefreshSelectedDetailOnPollingCadence(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "refreshSelectedDetail") {
+		t.Error("dashboard JS should define refreshSelectedDetail for polling-driven detail refresh")
+	}
+	if !strings.Contains(js, "if (state.token) refreshSelectedDetail()") {
+		t.Error("dashboard JS periodic refresh should call refreshSelectedDetail on each tick")
+	}
+}
+
+func TestDashboardJS_RefreshSelectedDetailChecksDrawerOpen(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	// refreshSelectedDetail should guard on the drawer being open
+	refreshIdx := strings.Index(js, "async function refreshSelectedDetail")
+	if refreshIdx < 0 {
+		t.Fatal("dashboard JS should define refreshSelectedDetail as an async function")
+	}
+	nextFuncIdx := strings.Index(js[refreshIdx+1:], "async function ")
+	var refreshBody string
+	if nextFuncIdx > 0 {
+		refreshBody = js[refreshIdx : refreshIdx+1+nextFuncIdx]
+	} else {
+		refreshBody = js[refreshIdx:]
+	}
+
+	if !strings.Contains(refreshBody, "state.selectedExecutionId") {
+		t.Error("refreshSelectedDetail should check state.selectedExecutionId before fetching")
+	}
+	if !strings.Contains(refreshBody, "classList.contains('open')") {
+		t.Error("refreshSelectedDetail should only refresh when the detail drawer is open")
+	}
+}
+
+func TestDashboardJS_RefreshSelectedDetailUpdatesContent(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	// refreshSelectedDetail should fetch the same endpoints as openDetail
+	refreshIdx := strings.Index(js, "async function refreshSelectedDetail")
+	if refreshIdx < 0 {
+		t.Fatal("dashboard JS should define refreshSelectedDetail")
+	}
+	nextFuncIdx := strings.Index(js[refreshIdx+1:], "async function ")
+	var refreshBody string
+	if nextFuncIdx > 0 {
+		refreshBody = js[refreshIdx : refreshIdx+1+nextFuncIdx]
+	} else {
+		refreshBody = js[refreshIdx:]
+	}
+
+	if !strings.Contains(refreshBody, "/v1/switches/") {
+		t.Error("refreshSelectedDetail should fetch the execution detail endpoint")
+	}
+	if !strings.Contains(refreshBody, "/steps") {
+		t.Error("refreshSelectedDetail should fetch the step timeline endpoint")
+	}
+	if !strings.Contains(refreshBody, "buildDetailHtml") {
+		t.Error("refreshSelectedDetail should call buildDetailHtml to render updated content")
+	}
+}
+
+func TestDashboardJS_OpenDetailUsesSharedBuildDetailHtml(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "function buildDetailHtml") {
+		t.Error("dashboard JS should define buildDetailHtml as a shared rendering function")
+	}
+
+	openDetailIdx := strings.Index(js, "async function openDetail")
+	if openDetailIdx < 0 {
+		t.Fatal("dashboard JS should define openDetail")
+	}
+	nextFuncIdx := strings.Index(js[openDetailIdx+1:], "async function ")
+	var openDetailBody string
+	if nextFuncIdx > 0 {
+		openDetailBody = js[openDetailIdx : openDetailIdx+1+nextFuncIdx]
+	} else {
+		openDetailBody = js[openDetailIdx:]
+	}
+
+	if !strings.Contains(openDetailBody, "buildDetailHtml") {
+		t.Error("openDetail should delegate rendering to buildDetailHtml")
+	}
+}
+
 func TestHealthEndpoint_Failure(t *testing.T) {
 	srv, _ := setupHistoryServer(t)
 

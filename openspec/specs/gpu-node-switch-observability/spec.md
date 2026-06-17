@@ -24,3 +24,15 @@ The system SHALL persist an operator-visible rejection summary on failed prechec
 
 - **WHEN** precheck fails before mutation because a required dependency or client is unavailable
 - **THEN** the persisted failed precheck step includes a concise operator-visible rejection summary derived from that failure
+
+#### Scenario: Failed placeholder job records state-based summary
+
+- **WHEN** a `slurm_to_openstack` execution fails from `awaiting_source_allocation` because placeholder job `12345` entered Slurm state `FAILED`
+- **THEN** the failed `wait_for_source_allocation` step includes an operator-visible summary mentioning job `12345` and state `FAILED`
+- **AND** the execution detail also exposes that summary as its final failure reason
+
+#### Scenario: Placeholder job completion without allocation records a readable reason
+
+- **WHEN** a `slurm_to_openstack` execution fails from `awaiting_source_allocation` because its placeholder job finished before any allocation event was received
+- **THEN** the failed `wait_for_source_allocation` step includes a readable summary explaining that allocation never arrived
+- **AND** the execution detail exposes the same operator-visible reason
