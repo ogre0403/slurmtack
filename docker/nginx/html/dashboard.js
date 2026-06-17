@@ -616,6 +616,42 @@
     } catch (e) { return ''; }
   }
 
+  function decodeSlurmExpiry(token) {
+    if (!token) return null;
+    var parts = token.split('.');
+    if (parts.length < 2) return null;
+    try {
+      var payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      return (typeof payload.exp === 'number') ? payload.exp : null;
+    } catch (e) { return null; }
+  }
+
+  function renderSlurmExpiry(exp) {
+    var el = document.getElementById('slurm-token-expiry');
+    if (!el) return;
+    if (exp === null) {
+      el.textContent = '—';
+      el.className = 'token-expiry unknown';
+      return;
+    }
+    var now = Math.floor(Date.now() / 1000);
+    var remaining = exp - now;
+    var date = new Date(exp * 1000);
+    var formatted = date.toLocaleString();
+    if (remaining <= 0) {
+      el.textContent = 'Expired — ' + formatted;
+      el.className = 'token-expiry expired';
+    } else if (remaining < 3600) {
+      var mins = Math.ceil(remaining / 60);
+      el.textContent = 'Expires in ' + mins + ' min — ' + formatted;
+      el.className = 'token-expiry expiring';
+    } else {
+      var hrs = (remaining / 3600).toFixed(1);
+      el.textContent = 'Expires in ' + hrs + ' h — ' + formatted;
+      el.className = 'token-expiry valid';
+    }
+  }
+
   function getSlurmSettingsValidation() {
     var s = state.slurmSettings;
     if (!s.slurm_user_token) return 'Slurm user token is required.';
@@ -633,6 +669,8 @@
     state.slurmDerivedUser = decodeSlurmUser(state.slurmSettings.slurm_user_token);
     var userEl = document.getElementById('slurm-derived-user');
     if (userEl) userEl.textContent = state.slurmDerivedUser || '—';
+
+    renderSlurmExpiry(decodeSlurmExpiry(state.slurmSettings.slurm_user_token));
 
     var hintEl = document.getElementById('slurm-sif-location-hint');
     if (hintEl) {

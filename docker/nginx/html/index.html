@@ -122,6 +122,11 @@
     #slurm-settings-panel input, #slurm-settings-panel textarea { width: 100%; font-size: 0.8rem; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; }
     #slurm-settings-panel textarea { resize: vertical; min-height: 48px; }
     #slurm-settings-panel .derived-user { font-size: 0.8rem; padding: 6px 8px; background: #f5f5f5; border: 1px solid #eee; border-radius: 4px; color: #333; min-height: 28px; }
+    #slurm-settings-panel .token-expiry { font-size: 0.8rem; padding: 6px 8px; border: 1px solid #eee; border-radius: 4px; min-height: 28px; }
+    #slurm-settings-panel .token-expiry.valid { background: #edfbf3; border-color: #a3e4c1; color: #1a6b3c; }
+    #slurm-settings-panel .token-expiry.expiring { background: #fff8e6; border-color: #ffd980; color: #6b5000; }
+    #slurm-settings-panel .token-expiry.expired { background: #fdf0ef; border-color: #f5c6c3; color: #721c24; }
+    #slurm-settings-panel .token-expiry.unknown { background: #f5f5f5; border-color: #eee; color: #888; }
     #slurm-settings-panel .sif-location-hint { font-size: 0.75rem; padding: 6px 8px; background: #f0f7ff; border: 1px solid #cce0ff; border-radius: 4px; color: #333; min-height: 28px; word-break: break-all; }
     #slurm-settings-panel .sif-location-hint.missing { background: #fff8e6; border-color: #ffd980; color: #6b5000; }
     #slurm-settings-panel .settings-actions { margin-top: 14px; display: flex; gap: 8px; }
@@ -148,6 +153,8 @@
     <textarea id="slurm-token-input" placeholder="Paste Slurm JWT token..." oninput="onSlurmTokenInput()"></textarea>
     <label>Derived Workload User</label>
     <div id="slurm-derived-user" class="derived-user">—</div>
+    <label>Token Expiry</label>
+    <div id="slurm-token-expiry" class="token-expiry unknown">—</div>
     <label for="slurm-account-input">Slurm Account</label>
     <input id="slurm-account-input" type="text" placeholder="e.g. proj-123" />
     <label for="slurm-sif-input">Placeholder SIF Filename</label>
