@@ -192,21 +192,34 @@
 
   function renderPartitionActionBar() {
     var bar = document.getElementById('partition-action-bar');
-    var hasSlurmNodes = state.nodes.some(function (n) {
+    var nodes = state.nodes;
+    if (state.selectedPartition) {
+      nodes = nodes.filter(function (n) {
+        return n.partitions && n.partitions.indexOf(state.selectedPartition) >= 0;
+      });
+    }
+    var hasSlurmNodes = nodes.some(function (n) {
       return n.available_direction === 'slurm_to_openstack';
     });
     if (!hasSlurmNodes) {
       bar.style.display = 'none';
       return;
     }
+    var allNodesReady = nodes.every(function (n) {
+      return n.owner === 'slurm' || n.owner === 'openstack' || n.owner === 'switching';
+    });
     var label = state.selectedPartition
       ? 'Switch from partition ' + escapeHtml(state.selectedPartition) + ' to OpenStack'
       : 'Switch from default partition to OpenStack';
     bar.style.display = 'flex';
-    var disabledAttr = !state.slurmDerivedUser ? ' disabled' : '';
+    var disabledAttr = (!state.slurmDerivedUser || !allNodesReady) ? ' disabled' : '';
+    var hint = !allNodesReady
+      ? '<span class="action-bar-hint">All nodes must be in Slurm or OpenStack state to switch</span>'
+      : '';
     bar.innerHTML =
       '<span class="partition-label">' + label + '</span>' +
-      '<button' + disabledAttr + ' onclick="switchFromPartition()">Switch to OpenStack</button>';
+      '<button' + disabledAttr + ' onclick="switchFromPartition()">Switch to OpenStack</button>' +
+      hint ;
   }
 
   function renderNodes() {
