@@ -11,7 +11,7 @@ var allowedTransitions = map[SwitchState][]SwitchState{
 	StateSourceDetached:           {StateHostReconfiguring, StateFailedNeedsRollback, StateCompensating},
 	StateHostReconfiguring:        {StateRebooting, StateTargetAttaching, StateFailedNeedsRollback, StateCompensating},
 	StateRebooting:                {StateHostReachable, StateFailedManualRecovery},
-	StateHostReachable:            {StateTargetAttaching, StateFailedManualRecovery, StateCompensating},
+	StateHostReachable:            {StateTargetAttaching, StateFailedNeedsRollback, StateFailedManualRecovery, StateCompensating},
 	StateTargetAttaching:          {StateVerifying, StateFailedNeedsRollback, StateCompensating},
 	StateVerifying:                {StateCompleted, StateFailedNeedsRollback, StateCompensating},
 	StateCompensating:             {StateCompleted, StateFailedNeedsRollback, StateFailedManualRecovery},

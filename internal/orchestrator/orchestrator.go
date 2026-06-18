@@ -1059,7 +1059,11 @@ func (o *Orchestrator) cancelJobWithExecIdentity(ctx context.Context, exec *doma
 }
 
 func (o *Orchestrator) failStep(ctx context.Context, step *domain.StepRecord, err error) error {
-	_ = o.steps.FinishStep(ctx, step, domain.StepStatusFailed)
+	// Persist the same underlying error text used for the execution-level
+	// terminal summary (processExecution terminalizes with err.Error()), so the
+	// failed step and execution detail expose a consistent, readable reason.
+	_ = o.steps.FinishStep(ctx, step, domain.StepStatusFailed,
+		engine.WithErrorSummary(err.Error()))
 	return err
 }
 

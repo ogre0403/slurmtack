@@ -197,6 +197,42 @@ func TestRunnerFailExecutionLogs(t *testing.T) {
 	}
 }
 
+func TestRunnerFailExecutionFromHostReachable(t *testing.T) {
+	s := store.NewMemoryStore()
+	ctx := context.Background()
+	exec := &domain.Execution{
+		ID:            "trace-exec-attach",
+		NodeName:      "gpu-05",
+		Direction:     domain.DirectionOpenStackToSlurm,
+		CurrentState:  domain.StateHostReachable,
+		StateVersion:  7,
+		OverallStatus: domain.OverallStatusActive,
+	}
+	if err := s.CreateExecution(ctx, exec); err != nil {
+		t.Fatal(err)
+	}
+
+	r := NewRunner(s, nil)
+
+	if err := r.FailExecution(ctx, "trace-exec-attach", domain.FailureMutationPartial, "step_error", "attach failed"); err != nil {
+		t.Fatalf("FailExecution: %v", err)
+	}
+
+	updated, err := s.GetExecution(ctx, "trace-exec-attach")
+	if err != nil {
+		t.Fatalf("GetExecution: %v", err)
+	}
+	if updated.CurrentState != domain.StateFailedNeedsRollback {
+		t.Fatalf("CurrentState = %s, want %s", updated.CurrentState, domain.StateFailedNeedsRollback)
+	}
+	if !updated.CurrentState.IsTerminal() {
+		t.Fatalf("state %s should be terminal", updated.CurrentState)
+	}
+	if updated.FinalErrorSummary != "attach failed" {
+		t.Fatalf("FinalErrorSummary = %q, want %q", updated.FinalErrorSummary, "attach failed")
+	}
+}
+
 func TestRunnerRunStepLogsSucceeded(t *testing.T) {
 	s := store.NewMemoryStore()
 	ctx := context.Background()

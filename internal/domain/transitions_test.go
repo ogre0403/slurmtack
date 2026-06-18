@@ -30,6 +30,8 @@ func TestValidTransitions(t *testing.T) {
 		{StateRebooting, StateFailedManualRecovery, true},
 		{StateRebooting, StateFailedNonDestructive, false},
 		{StateHostReachable, StateTargetAttaching, true},
+		{StateHostReachable, StateFailedNeedsRollback, true},
+		{StateHostReachable, StateFailedNonDestructive, false},
 		{StateTargetAttaching, StateVerifying, true},
 		{StateVerifying, StateCompleted, true},
 		{StateCompleted, StateRequested, false},

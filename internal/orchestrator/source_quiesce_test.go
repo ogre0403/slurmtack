@@ -26,6 +26,7 @@ type fakeOpenStackClient struct {
 	listMigrationsCalls int
 	disableComputeCalls int
 	enableComputeCalls  int
+	enableComputeErr    error
 }
 
 func (f *fakeOpenStackClient) ListInstances(ctx context.Context, hostName string) ([]openstack.Instance, error) {
@@ -53,7 +54,7 @@ func (f *fakeOpenStackClient) DisableComputeService(ctx context.Context, hostNam
 
 func (f *fakeOpenStackClient) EnableComputeService(ctx context.Context, hostName string) error {
 	f.enableComputeCalls++
-	return nil
+	return f.enableComputeErr
 }
 
 func newSourceQuiescingExecution() *domain.Execution {
