@@ -238,3 +238,129 @@ func TestDoAttachBlocksWhenSlurmdRestoreFails(t *testing.T) {
 		t.Fatalf("CurrentState = %s, want %s", updated.CurrentState, domain.StateHostReachable)
 	}
 }
+
+const pamNologinStderr = "** WARNING: connection is not using a post-quantum key exchange algorithm.\nSystem is booting up. Unprivileged users are not permitted to log in yet. Please come back later. For technical details, see pam_nologin(8)."
+
+func withFastSlurmdRetry(t *testing.T) {
+	t.Helper()
+	prevBackoff := slurmdRestoreBackoff
+	prevAttempts := slurmdRestoreMaxAttempts
+	slurmdRestoreBackoff = time.Millisecond
+	slurmdRestoreMaxAttempts = 3
+	t.Cleanup(func() {
+		slurmdRestoreBackoff = prevBackoff
+		slurmdRestoreMaxAttempts = prevAttempts
+	})
+}
+
+func TestDoAttachRetriesBootTransientSlurmdRestore(t *testing.T) {
+	withFastSlurmdRetry(t)
+	ctx := context.Background()
+	s := store.NewMemoryStore()
+	exec := &domain.Execution{
+		ID:            "exec-attach-retry",
+		NodeName:      "gpu-node-01",
+		Direction:     domain.DirectionOpenStackToSlurm,
+		RequestedBy:   "test",
+		RequestedAt:   time.Now(),
+		CurrentState:  domain.StateHostReachable,
+		DesiredOwner:  domain.OwnerSlurm,
+		PreviousOwner: domain.OwnerOpenStack,
+		StateVersion:  1,
+		OverallStatus: domain.OverallStatusActive,
+	}
+	if err := s.CreateExecution(ctx, exec); err != nil {
+		t.Fatalf("CreateExecution() error = %v", err)
+	}
+
+	runner := engine.NewRunner(s, nil)
+	// enable: booting then success; start: success.
+	sshRunner := &scriptedSSHRunner{
+		t: t,
+		responses: []scriptedSSHResponse{{
+			result: &remote.CommandResult{ExitCode: 1, Stderr: pamNologinStderr},
+		}, {
+			result: &remote.CommandResult{ExitCode: 0},
+		}, {
+			result: &remote.CommandResult{ExitCode: 0},
+		}},
+	}
+	client := &attachTestSlurmClient{
+		nodeState: &slurm.NodeState{NodeName: exec.NodeName, State: "drained"},
+	}
+	orch := New(s, runner, sshRunner, client, nil, Config{}, nil)
+
+	if err := orch.doAttach(ctx, exec); err != nil {
+		t.Fatalf("doAttach() error = %v", err)
+	}
+	if len(sshRunner.requests) != 3 {
+		t.Fatalf("sshRunner requests = %d, want 3", len(sshRunner.requests))
+	}
+	if client.resumeCalls != 1 {
+		t.Fatalf("ResumeNode() calls = %d, want 1", client.resumeCalls)
+	}
+
+	updated, err := s.GetExecution(ctx, exec.ID)
+	if err != nil {
+		t.Fatalf("GetExecution() error = %v", err)
+	}
+	if updated.CurrentState != domain.StateTargetAttaching {
+		t.Fatalf("CurrentState = %s, want %s", updated.CurrentState, domain.StateTargetAttaching)
+	}
+}
+
+func TestDoAttachFailsAfterExhaustingBootTransientRetries(t *testing.T) {
+	withFastSlurmdRetry(t)
+	ctx := context.Background()
+	s := store.NewMemoryStore()
+	exec := &domain.Execution{
+		ID:            "exec-attach-exhausted",
+		NodeName:      "gpu-node-01",
+		Direction:     domain.DirectionOpenStackToSlurm,
+		RequestedBy:   "test",
+		RequestedAt:   time.Now(),
+		CurrentState:  domain.StateHostReachable,
+		DesiredOwner:  domain.OwnerSlurm,
+		PreviousOwner: domain.OwnerOpenStack,
+		StateVersion:  1,
+		OverallStatus: domain.OverallStatusActive,
+	}
+	if err := s.CreateExecution(ctx, exec); err != nil {
+		t.Fatalf("CreateExecution() error = %v", err)
+	}
+
+	runner := engine.NewRunner(s, nil)
+	sshRunner := &scriptedSSHRunner{
+		t:           t,
+		defaultResp: &scriptedSSHResponse{result: &remote.CommandResult{ExitCode: 1, Stderr: pamNologinStderr}},
+	}
+	client := &attachTestSlurmClient{
+		nodeState: &slurm.NodeState{NodeName: exec.NodeName, State: "drained"},
+	}
+	orch := New(s, runner, sshRunner, client, nil, Config{}, nil)
+
+	err := orch.doAttach(ctx, exec)
+	if err == nil {
+		t.Fatal("doAttach() error = nil, want slurmd restore failure")
+	}
+	if !strings.Contains(err.Error(), "slurmd enable failed") {
+		t.Fatalf("doAttach() error = %q, want substring %q", err.Error(), "slurmd enable failed")
+	}
+	if len(sshRunner.requests) != slurmdRestoreMaxAttempts {
+		t.Fatalf("sshRunner requests = %d, want %d", len(sshRunner.requests), slurmdRestoreMaxAttempts)
+	}
+	if client.resumeCalls != 0 {
+		t.Fatalf("ResumeNode() calls = %d, want 0", client.resumeCalls)
+	}
+	if client.getNodeStateCalls != 0 {
+		t.Fatalf("GetNodeState() calls = %d, want 0", client.getNodeStateCalls)
+	}
+
+	updated, getErr := s.GetExecution(ctx, exec.ID)
+	if getErr != nil {
+		t.Fatalf("GetExecution() error = %v", getErr)
+	}
+	if updated.CurrentState != domain.StateHostReachable {
+		t.Fatalf("CurrentState = %s, want %s", updated.CurrentState, domain.StateHostReachable)
+	}
+}

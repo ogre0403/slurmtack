@@ -28,17 +28,24 @@ The orchestrator SHALL poll a rebooted host via SSH at a configurable interval (
 
 ### Requirement: SSH probe command
 
-The SSH poll SHALL execute a minimal command (`hostname`) to verify the host is responsive. The probe MUST use the existing `remote.Runner` interface with a short per-attempt timeout (5 seconds). A successful probe SHALL satisfy the reboot wait only after the reboot has already been observed through a prior failed probe.
+The SSH poll SHALL execute a command that verifies the host has finished booting, not merely that sshd accepts connections. The probe MUST confirm the node is out of the `pam_nologin` window (e.g. `/run/nologin` is absent) before reachability is satisfied. The probe MUST use the existing `remote.Runner` interface with a short per-attempt timeout (5 seconds). A successful probe SHALL satisfy the reboot wait only after the reboot has already been observed through a prior failed probe.
+
+A probe that establishes an SSH connection but is rejected because the system is still booting (for example `pam_nologin` reporting "System is booting up. Unprivileged users are not permitted to log in yet") MUST be treated as reboot progress that is not yet complete: it counts as evidence the reboot has occurred and polling continues, but it MUST NOT satisfy reachability. The harmless post-quantum key-exchange warning emitted on SSH stderr MUST NOT by itself be treated as a probe failure.
 
 #### Scenario: Probe succeeds after reboot progress is observed
 
-- **WHEN** SSH connection is established, `hostname` returns exit code 0, and at least one earlier probe in the same reboot wait failed
+- **WHEN** SSH connection is established, the boot-completion probe returns exit code 0, and at least one earlier probe in the same reboot wait failed
 - **THEN** the host is considered reachable
 
 #### Scenario: Probe succeeds before reboot progress is observed
 
-- **WHEN** SSH connection is established and `hostname` returns exit code 0 before any earlier probe in the same reboot wait has failed
+- **WHEN** SSH connection is established and the boot-completion probe returns exit code 0 before any earlier probe in the same reboot wait has failed
 - **THEN** the probe is treated as evidence that the old session may still be up and polling continues
+
+#### Scenario: Connected but still booting
+
+- **WHEN** SSH connection is established but the login or probe is rejected because the system is still booting (`pam_nologin`)
+- **THEN** poll records that reboot progress has been observed, does not satisfy reachability, waits for the next interval, and retries
 
 #### Scenario: Probe connection refused
 
@@ -49,6 +56,11 @@ The SSH poll SHALL execute a minimal command (`hostname`) to verify the host is 
 
 - **WHEN** SSH connection hangs or times out while the execution is waiting for reboot completion
 - **THEN** poll records that reboot progress has been observed, waits for the next interval, and retries
+
+#### Scenario: Post-quantum warning on stderr is not a failure
+
+- **WHEN** a probe connection emits the post-quantum key-exchange warning on stderr but the boot-completion check returns exit code 0
+- **THEN** the warning is ignored and the probe result is determined solely by the boot-completion check
 
 ### Requirement: Configurable poll parameters
 
@@ -66,7 +78,7 @@ The SSH poll interval and overall timeout MUST be configurable via environment v
 
 ### Requirement: Configured SSH runner transport
 
-The daemon SHALL use a configured SSH runner transport for reboot and reachability operations. That transport MUST apply the configured `SSH_USER`, `SSH_PORT`, `SSH_OPTIONS`, and `SSH_PRIVATE_KEY_PATH` values to both the `reboot` command and the post-reboot `hostname` probe. The transport MUST render the remote command payload from `Command` and `Args` only; `execution_id`, `step_name`, and other workflow metadata MAY be used for local correlation and logging but MUST NOT be appended to the remote command line.
+The daemon SHALL use a configured SSH runner transport for reboot and reachability operations. That transport MUST apply the configured `SSH_USER`, `SSH_PORT`, `SSH_OPTIONS`, and `SSH_PRIVATE_KEY_PATH` values to both the `reboot` command and the post-reboot boot-completion probe. The transport MUST render the remote command payload from `Command` and `Args` only; `execution_id`, `step_name`, and other workflow metadata MAY be used for local correlation and logging but MUST NOT be appended to the remote command line.
 
 #### Scenario: Reboot command uses configured identity
 
@@ -76,7 +88,7 @@ The daemon SHALL use a configured SSH runner transport for reboot and reachabili
 #### Scenario: Reachability probe uses the same transport
 
 - **WHEN** an execution is in state `rebooting` and the orchestrator polls host reachability
-- **THEN** each `hostname` probe uses the same configured SSH user, port, private key file, and SSH options as the reboot command, and the rendered remote command is exactly `hostname`
+- **THEN** each boot-completion probe uses the same configured SSH user, port, private key file, and SSH options as the reboot command
 
 #### Scenario: Workflow metadata does not mutate the remote payload
 

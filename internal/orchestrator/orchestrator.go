@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +44,16 @@ type Orchestrator struct {
 }
 
 const slurmdCommandTimeout = 30 * time.Second
+
+// Bounded retry for slurmd restore commands during OpenStack-to-Slurm attach.
+// Attach runs shortly after a reboot, so a boot-transient failure (pam_nologin)
+// between a passing reachability probe and the attach call should be retried
+// rather than failing the whole execution. These are vars so tests can shrink
+// the backoff; the total retry budget stays well under slurmdCommandTimeout.
+var (
+	slurmdRestoreMaxAttempts = 5
+	slurmdRestoreBackoff     = 3 * time.Second
+)
 
 func New(s store.Store, runner *engine.Runner, sshRunner remote.Runner, slurmClient slurm.Client, osClient openstack.Client, cfg Config, logger *slog.Logger) *Orchestrator {
 	l := trace.OrDefault(logger)
@@ -765,9 +774,58 @@ func (o *Orchestrator) runSlurmdServiceCommands(ctx context.Context, exec *domai
 	return nil
 }
 
+// runSlurmdRestoreCommands runs the OpenStack-to-Slurm restore commands with
+// bounded retry on boot-transient failures, since attach runs shortly after a
+// reboot and may briefly race the pam_nologin window.
+func (o *Orchestrator) runSlurmdRestoreCommands(ctx context.Context, exec *domain.Execution, actions ...string) error {
+	for _, action := range actions {
+		if err := o.runSlurmdServiceCommandWithRetry(ctx, exec, action); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (o *Orchestrator) runSlurmdServiceCommand(ctx context.Context, exec *domain.Execution, action string) error {
+	err, _ := o.runSlurmdServiceCommandOnce(ctx, exec, action)
+	return err
+}
+
+// runSlurmdServiceCommandWithRetry runs a slurmd service command, retrying when
+// the failure is boot-transient (the node is still booting, pam_nologin). Used
+// for the OpenStack-to-Slurm restore path that runs right after a reboot.
+func (o *Orchestrator) runSlurmdServiceCommandWithRetry(ctx context.Context, exec *domain.Execution, action string) error {
+	var err error
+	var transient bool
+	for attempt := 1; attempt <= slurmdRestoreMaxAttempts; attempt++ {
+		err, transient = o.runSlurmdServiceCommandOnce(ctx, exec, action)
+		if err == nil {
+			return nil
+		}
+		if !transient || attempt == slurmdRestoreMaxAttempts {
+			return err
+		}
+		trace.ForExecution(o.logger, exec).Info(trace.EventWaitProgress,
+			"action", "slurmd_"+action,
+			"wait_for", "host_boot_completion",
+			"attempt", attempt,
+			"max_attempts", slurmdRestoreMaxAttempts,
+			"error", err.Error(),
+		)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(slurmdRestoreBackoff):
+		}
+	}
+	return err
+}
+
+// runSlurmdServiceCommandOnce issues a single slurmd systemctl command. The
+// boolean reports whether a returned error is boot-transient and worth retrying.
+func (o *Orchestrator) runSlurmdServiceCommandOnce(ctx context.Context, exec *domain.Execution, action string) (error, bool) {
 	if o.sshRunner == nil {
-		return errors.New("ssh runner not configured")
+		return errors.New("ssh runner not configured"), false
 	}
 
 	result, err := o.sshRunner.Execute(ctx, remote.CommandRequest{
@@ -779,23 +837,21 @@ func (o *Orchestrator) runSlurmdServiceCommand(ctx context.Context, exec *domain
 		Timeout:     slurmdCommandTimeout,
 	})
 	if err != nil {
-		return fmt.Errorf("slurmd %s failed: %w", action, err)
+		return fmt.Errorf("slurmd %s failed: %w", action, err), isBootIncomplete(nil, err)
 	}
 	if result == nil {
-		return fmt.Errorf("slurmd %s failed: empty ssh result", action)
+		return fmt.Errorf("slurmd %s failed: empty ssh result", action), false
 	}
 	if result.ExitCode != 0 {
-		message := strings.TrimSpace(result.Stderr)
+		transient := isBootIncomplete(result, nil)
+		message := bootMessage(result)
 		if message == "" {
-			message = strings.TrimSpace(result.Stdout)
+			return fmt.Errorf("slurmd %s failed: exit code %d", action, result.ExitCode), transient
 		}
-		if message == "" {
-			return fmt.Errorf("slurmd %s failed: exit code %d", action, result.ExitCode)
-		}
-		return fmt.Errorf("slurmd %s failed: exit code %d: %s", action, result.ExitCode, message)
+		return fmt.Errorf("slurmd %s failed: exit code %d: %s", action, result.ExitCode, message), transient
 	}
 
-	return nil
+	return nil, false
 }
 
 func (o *Orchestrator) doReboot(ctx context.Context, exec *domain.Execution) error {
@@ -867,7 +923,7 @@ func (o *Orchestrator) doAttach(ctx context.Context, exec *domain.Execution) err
 			return o.failStep(ctx, step, err)
 		}
 	} else {
-		if err := o.runSlurmdServiceCommands(ctx, exec, "enable", "start"); err != nil {
+		if err := o.runSlurmdRestoreCommands(ctx, exec, "enable", "start"); err != nil {
 			return o.failStep(ctx, step, err)
 		}
 		if o.slurm == nil {

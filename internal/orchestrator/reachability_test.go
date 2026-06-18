@@ -254,11 +254,16 @@ func TestDoSSHPollThreadsExecutionMetadataIntoProbe(t *testing.T) {
 	if req.Host != exec.NodeName {
 		t.Fatalf("probe host = %q, want %q", req.Host, exec.NodeName)
 	}
-	if req.Command != "hostname" {
-		t.Fatalf("probe command = %q, want %q", req.Command, "hostname")
+	if req.Command != probeCommand {
+		t.Fatalf("probe command = %q, want %q", req.Command, probeCommand)
 	}
-	if len(req.Args) != 0 {
-		t.Fatalf("probe args = %#v, want none", req.Args)
+	if len(req.Args) != len(probeArgs) {
+		t.Fatalf("probe args = %#v, want %#v", req.Args, probeArgs)
+	}
+	for i, want := range probeArgs {
+		if req.Args[i] != want {
+			t.Fatalf("probe arg %d = %q, want %q", i, req.Args[i], want)
+		}
 	}
 	if req.ExecutionID != exec.ID {
 		t.Fatalf("probe execution_id = %q, want %q", req.ExecutionID, exec.ID)
@@ -370,6 +375,57 @@ func TestDoSSHPollIgnoresEarlySuccessUntilHostReturns(t *testing.T) {
 	}
 	if satisfied.Attrs["probe_result"] != "post_reboot_recovery" {
 		t.Fatalf("wait.satisfied probe_result = %q, want %q", satisfied.Attrs["probe_result"], "post_reboot_recovery")
+	}
+}
+
+func TestDoSSHPollWaitsForPamNologinWindowToClear(t *testing.T) {
+	logger, captured := newCaptureLogger()
+	// First the host is unreachable (reboot in progress), then it accepts the
+	// connection but is still booting (pam_nologin / /run/nologin present), and
+	// only the final probe reports boot completion.
+	sshRunner := &scriptedSSHRunner{
+		t: t,
+		responses: []scriptedSSHResponse{{
+			err: errors.New("connection refused"),
+		}, {
+			result: &remote.CommandResult{
+				ExitCode: 1,
+				Stderr:   "** WARNING: connection is not using a post-quantum key exchange algorithm.\nSystem is booting up. Unprivileged users are not permitted to log in yet. Please come back later. For technical details, see pam_nologin(8).",
+			},
+		}, {
+			result: &remote.CommandResult{ExitCode: 0},
+		}},
+	}
+	orch, s, exec := newSSHOrchestrator(t, sshRunner, logger)
+	exec.CurrentState = domain.StateRebooting
+	if err := s.UpdateExecution(context.Background(), exec); err != nil {
+		t.Fatalf("update execution: %v", err)
+	}
+
+	if err := orch.doSSHPoll(context.Background(), exec); err != nil {
+		t.Fatalf("doSSHPoll() error = %v", err)
+	}
+	if len(sshRunner.requests) != 3 {
+		t.Fatalf("sshRunner requests = %d, want 3", len(sshRunner.requests))
+	}
+
+	updated, err := s.GetExecution(context.Background(), exec.ID)
+	if err != nil {
+		t.Fatalf("get execution: %v", err)
+	}
+	if updated.CurrentState != domain.StateHostReachable {
+		t.Fatalf("execution state = %s, want %s", updated.CurrentState, domain.StateHostReachable)
+	}
+
+	progressLogs := captured.findAll("wait.progress")
+	if len(progressLogs) < 2 {
+		t.Fatalf("wait.progress logs = %d, want at least 2", len(progressLogs))
+	}
+	if progressLogs[0].Attrs["probe_result"] != "reboot_progress_observed" {
+		t.Fatalf("first wait.progress probe_result = %q, want %q", progressLogs[0].Attrs["probe_result"], "reboot_progress_observed")
+	}
+	if progressLogs[1].Attrs["probe_result"] != "connected_still_booting" {
+		t.Fatalf("second wait.progress probe_result = %q, want %q", progressLogs[1].Attrs["probe_result"], "connected_still_booting")
 	}
 }
 
