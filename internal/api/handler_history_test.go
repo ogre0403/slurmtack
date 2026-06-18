@@ -119,6 +119,90 @@ func TestList_NewestFirst(t *testing.T) {
 	}
 }
 
+func TestList_RequestedTimeRangeFilter(t *testing.T) {
+	srv, s := setupHistoryServer(t)
+	seedExecutions(t, s)
+
+	// Window covering e2 (11:00) and e3 (12:00) but excluding e1 (10:00) and e4 (13:00).
+	w := doAuthGet(srv, "/v1/switches?requested_from=2026-06-01T11:00:00Z&requested_to=2026-06-01T12:00:00Z")
+	if w.Code != 200 {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	var results []ExecutionStatus
+	json.Unmarshal(w.Body.Bytes(), &results)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 (e2, e3), got %d", len(results))
+	}
+	for _, r := range results {
+		if r.ID != "e2" && r.ID != "e3" {
+			t.Errorf("unexpected execution in window: %s", r.ID)
+		}
+	}
+}
+
+func TestList_CombinedFilters(t *testing.T) {
+	srv, s := setupHistoryServer(t)
+	seedExecutions(t, s)
+
+	// node=gpu-01, status=failed, direction=slurm_to_openstack inside the full window matches only e2.
+	w := doAuthGet(srv, "/v1/switches?node=gpu-01&status=failed&direction=slurm_to_openstack&requested_from=2026-06-01T00:00:00Z&requested_to=2026-06-01T23:59:59Z")
+	if w.Code != 200 {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	var results []ExecutionStatus
+	json.Unmarshal(w.Body.Bytes(), &results)
+	if len(results) != 1 || results[0].ID != "e2" {
+		t.Fatalf("expected only e2, got %+v", results)
+	}
+}
+
+func TestList_PaginationInsideRange(t *testing.T) {
+	srv, s := setupHistoryServer(t)
+	seedExecutions(t, s)
+
+	// Full-day window, page 1: newest-first with limit 2 -> e4 (13:00), e3 (12:00).
+	w := doAuthGet(srv, "/v1/switches?requested_from=2026-06-01T00:00:00Z&requested_to=2026-06-01T23:59:59Z&limit=2")
+	if w.Code != 200 {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	var page1 []ExecutionStatus
+	json.Unmarshal(w.Body.Bytes(), &page1)
+	if len(page1) != 2 || page1[0].ID != "e4" || page1[1].ID != "e3" {
+		t.Fatalf("unexpected page 1: %+v", page1)
+	}
+
+	// Page 2: same window, before the oldest row on page 1 (e3 at 12:00) -> e2 (11:00), e1 (10:00).
+	w = doAuthGet(srv, "/v1/switches?requested_from=2026-06-01T00:00:00Z&requested_to=2026-06-01T23:59:59Z&limit=2&before=2026-06-01T12:00:00Z")
+	if w.Code != 200 {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	var page2 []ExecutionStatus
+	json.Unmarshal(w.Body.Bytes(), &page2)
+	if len(page2) != 2 || page2[0].ID != "e2" || page2[1].ID != "e1" {
+		t.Fatalf("unexpected page 2: %+v", page2)
+	}
+}
+
+func TestList_RejectsInvertedRange(t *testing.T) {
+	srv, s := setupHistoryServer(t)
+	seedExecutions(t, s)
+
+	w := doAuthGet(srv, "/v1/switches?requested_from=2026-06-01T23:59:59Z&requested_to=2026-06-01T00:00:00Z")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestList_RejectsInvalidRangeTimestamp(t *testing.T) {
+	srv, s := setupHistoryServer(t)
+	seedExecutions(t, s)
+
+	w := doAuthGet(srv, "/v1/switches?requested_from=not-a-timestamp")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestSteps_ReturnsOrderedSteps(t *testing.T) {
 	srv, s := setupHistoryServer(t)
 	exec := &domain.Execution{

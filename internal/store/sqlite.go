@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -80,30 +81,53 @@ func (s *SQLiteStore) GetExecution(_ context.Context, id string) (*domain.Execut
 	return scanExecution(row)
 }
 
-func (s *SQLiteStore) ListExecutions(_ context.Context, nodeName string) ([]*domain.Execution, error) {
-	var rows *sql.Rows
-	var err error
-	if nodeName == "" {
-		rows, err = s.db.Query(`SELECT
-			id, node_name, direction, requested_by, requested_at,
-			current_state, desired_owner, previous_owner, state_version,
-			overall_status, lock_acquired_at, lock_released_at,
-			final_error_code, final_error_summary, log_root,
-			placeholder_job_id, requested_slurm_constraint, requested_slurm_partition,
-			requested_slurm_account, slurm_workload_user, slurm_workload_token,
-			placeholder_sif_file, allocation_event_at, cancellation_source_state
-		FROM executions`)
-	} else {
-		rows, err = s.db.Query(`SELECT
-			id, node_name, direction, requested_by, requested_at,
-			current_state, desired_owner, previous_owner, state_version,
-			overall_status, lock_acquired_at, lock_released_at,
-			final_error_code, final_error_summary, log_root,
-			placeholder_job_id, requested_slurm_constraint, requested_slurm_partition,
-			requested_slurm_account, slurm_workload_user, slurm_workload_token,
-			placeholder_sif_file, allocation_event_at, cancellation_source_state
-		FROM executions WHERE node_name = ?`, nodeName)
+func (s *SQLiteStore) ListExecutions(_ context.Context, filter ExecutionFilter) ([]*domain.Execution, error) {
+	query := `SELECT
+		id, node_name, direction, requested_by, requested_at,
+		current_state, desired_owner, previous_owner, state_version,
+		overall_status, lock_acquired_at, lock_released_at,
+		final_error_code, final_error_summary, log_root,
+		placeholder_job_id, requested_slurm_constraint, requested_slurm_partition,
+		requested_slurm_account, slurm_workload_user, slurm_workload_token,
+		placeholder_sif_file, allocation_event_at, cancellation_source_state
+	FROM executions`
+
+	var conditions []string
+	var args []interface{}
+	if filter.NodeName != "" {
+		conditions = append(conditions, "node_name = ?")
+		args = append(args, filter.NodeName)
 	}
+	if filter.Status != "" {
+		conditions = append(conditions, "overall_status = ?")
+		args = append(args, filter.Status)
+	}
+	if filter.Direction != "" {
+		conditions = append(conditions, "direction = ?")
+		args = append(args, filter.Direction)
+	}
+	if filter.RequestedFrom != nil {
+		conditions = append(conditions, "requested_at >= ?")
+		args = append(args, *filter.RequestedFrom)
+	}
+	if filter.RequestedTo != nil {
+		conditions = append(conditions, "requested_at <= ?")
+		args = append(args, *filter.RequestedTo)
+	}
+	if filter.Before != nil {
+		conditions = append(conditions, "requested_at < ?")
+		args = append(args, *filter.Before)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY requested_at DESC"
+	if filter.Limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, filter.Limit)
+	}
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

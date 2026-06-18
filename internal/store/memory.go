@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -44,15 +45,37 @@ func (m *MemoryStore) GetExecution(_ context.Context, id string) (*domain.Execut
 	return &cp, nil
 }
 
-func (m *MemoryStore) ListExecutions(_ context.Context, nodeName string) ([]*domain.Execution, error) {
+func (m *MemoryStore) ListExecutions(_ context.Context, filter ExecutionFilter) ([]*domain.Execution, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var result []*domain.Execution
 	for _, exec := range m.executions {
-		if nodeName == "" || exec.NodeName == nodeName {
-			cp := *exec
-			result = append(result, &cp)
+		if filter.NodeName != "" && exec.NodeName != filter.NodeName {
+			continue
 		}
+		if filter.Status != "" && string(exec.OverallStatus) != filter.Status {
+			continue
+		}
+		if filter.Direction != "" && string(exec.Direction) != filter.Direction {
+			continue
+		}
+		if filter.RequestedFrom != nil && exec.RequestedAt.Before(*filter.RequestedFrom) {
+			continue
+		}
+		if filter.RequestedTo != nil && exec.RequestedAt.After(*filter.RequestedTo) {
+			continue
+		}
+		if filter.Before != nil && !exec.RequestedAt.Before(*filter.Before) {
+			continue
+		}
+		cp := *exec
+		result = append(result, &cp)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].RequestedAt.After(result[j].RequestedAt)
+	})
+	if filter.Limit > 0 && len(result) > filter.Limit {
+		result = result[:filter.Limit]
 	}
 	return result, nil
 }

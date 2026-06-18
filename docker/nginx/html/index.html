@@ -73,6 +73,9 @@
     /* Execution filters */
     .history-filters { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
     .history-filters select, .history-filters input { font-size: 0.75rem; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; }
+    .history-date-label { font-size: 0.7rem; color: #666; margin-bottom: 2px; }
+    .history-date-row { display: flex; gap: 8px; }
+    .history-date-field { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 
     /* Pagination controls */
     .exec-pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 8px; font-size: 0.75rem; }
@@ -199,6 +202,16 @@
           <option value="slurm_to_openstack">→ OpenStack</option>
           <option value="openstack_to_slurm">→ Slurm</option>
         </select>
+        <div class="history-date-row">
+          <div class="history-date-field">
+            <label class="history-date-label" for="history-from-filter">From</label>
+            <input type="date" id="history-from-filter">
+          </div>
+          <div class="history-date-field">
+            <label class="history-date-label" for="history-to-filter">To</label>
+            <input type="date" id="history-to-filter">
+          </div>
+        </div>
       </div>
       <ul id="execution-list"></ul>
       <div class="exec-pagination">

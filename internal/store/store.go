@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/slurmtack/slurmtack/internal/domain"
 )
@@ -14,10 +15,22 @@ var (
 	ErrLeaseNotHeld    = errors.New("lease not held by this execution")
 )
 
+// ExecutionFilter narrows and paginates an execution list query. All fields are
+// optional; the zero value selects every execution ordered newest-first.
+type ExecutionFilter struct {
+	NodeName      string
+	Status        string
+	Direction     string
+	RequestedFrom *time.Time // inclusive lower bound on requested_at
+	RequestedTo   *time.Time // inclusive upper bound on requested_at
+	Before        *time.Time // exclusive cursor: only executions requested before this instant
+	Limit         int        // maximum results returned (0 means no limit)
+}
+
 type Store interface {
 	CreateExecution(ctx context.Context, exec *domain.Execution) error
 	GetExecution(ctx context.Context, id string) (*domain.Execution, error)
-	ListExecutions(ctx context.Context, nodeName string) ([]*domain.Execution, error)
+	ListExecutions(ctx context.Context, filter ExecutionFilter) ([]*domain.Execution, error)
 	ListActiveExecutions(ctx context.Context) ([]*domain.Execution, error)
 
 	// AdvanceState transitions the execution to newState only if the current

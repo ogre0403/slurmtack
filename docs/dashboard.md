@@ -11,7 +11,7 @@ Open the stack's external HTTP entrypoint in a browser. On first load, the dashb
 - **Header**: Shows backend health status (proxied via `/api/health`).
 - **Partitions panel** (left): Lists discovered Slurm partitions. Click a partition to filter the node grid.
 - **Nodes panel** (center): Displays one card per node with ownership badge, Slurm/OpenStack state summary, and available actions.
-- **History panel** (right): Recent executions with filters by node and status. Click any execution to open the detail drawer.
+- **History panel** (right): Recent executions with filters by node, status, direction, and a requested-date range. The date range defaults to today back through the prior seven days. Click any execution to open the detail drawer.
 
 ## Node Ownership
 
@@ -122,10 +122,14 @@ Lists executions with additional filters:
 - `node`: Filter by node name
 - `status`: Filter by overall status (`active`, `succeeded`, `failed`)
 - `direction`: Filter by direction (`openstack_to_slurm`, `slurm_to_openstack`)
+- `requested_from`: RFC3339 timestamp; returns only executions whose `requested_at` is at or after this instant
+- `requested_to`: RFC3339 timestamp; returns only executions whose `requested_at` is at or before this instant
 - `limit`: Maximum number of results
 - `before`: RFC3339 timestamp for pagination (returns only executions before this time)
 
-Results are ordered newest-first.
+Results are ordered newest-first. A request where `requested_from` is after `requested_to` is rejected with HTTP 400. The `requested_from`/`requested_to` window is applied alongside the other filters and before pagination, so `before` cursors page through executions inside the selected range.
+
+The dashboard's history panel exposes this range as **From** and **To** date inputs, defaulting to the operator's local calendar range from seven days before today through today. The selected dates are translated to the start (`00:00:00`) and end (`23:59:59`) of those local days before being sent as `requested_from` and `requested_to`. Changing either date resets the list to the first page.
 
 ### GET /v1/switches/:id (expanded)
 

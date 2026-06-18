@@ -297,7 +297,7 @@ func TestCreateOpenStackToSlurmRejectsDuplicateSlurmOwnership(t *testing.T) {
 		t.Fatalf("unexpected error response: %+v", resp)
 	}
 
-	executions, err := sqlStore.ListExecutions(context.Background(), "")
+	executions, err := sqlStore.ListExecutions(context.Background(), store.ExecutionFilter{})
 	if err != nil {
 		t.Fatalf("ListExecutions() error = %v", err)
 	}

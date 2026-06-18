@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
@@ -124,67 +123,75 @@ func (h *SwitchHandler) Get(c *gin.Context) {
 
 // List returns a paginated list of switch executions.
 // @Summary     List switch executions
-// @Description Returns executions ordered by most-recent-first. Supports filtering by node name, status, direction, and a before-timestamp cursor.
+// @Description Returns executions ordered by most-recent-first. Supports filtering by node name, status, direction, a requested-time range, and a before-timestamp cursor.
 // @Tags        switches
 // @Produce     json
 // @Security    BearerAuth
-// @Param       node      query    string false "Filter by node name"
-// @Param       status    query    string false "Filter by overall_status (active, completed, failed, cancelled)"
-// @Param       direction query    string false "Filter by direction (slurm_to_openstack, openstack_to_slurm)"
-// @Param       limit     query    int    false "Maximum number of results (default: all)"
-// @Param       before    query    string false "Return only executions requested before this RFC3339 timestamp"
+// @Param       node           query    string false "Filter by node name"
+// @Param       status         query    string false "Filter by overall_status (active, completed, failed, cancelled)"
+// @Param       direction      query    string false "Filter by direction (slurm_to_openstack, openstack_to_slurm)"
+// @Param       requested_from query    string false "Return only executions requested at or after this RFC3339 timestamp"
+// @Param       requested_to   query    string false "Return only executions requested at or before this RFC3339 timestamp"
+// @Param       limit          query    int    false "Maximum number of results (default: all)"
+// @Param       before         query    string false "Return only executions requested before this RFC3339 timestamp"
 // @Success     200 {array}  ExecutionStatus
 // @Failure     400 {object} ErrorResponse
 // @Failure     500 {object} ErrorResponse
 // @Router      /v1/switches [get]
 func (h *SwitchHandler) List(c *gin.Context) {
-	nodeFilter := c.Query("node")
-	statusFilter := c.Query("status")
-	directionFilter := c.Query("direction")
-	limitStr := c.Query("limit")
-	beforeStr := c.Query("before")
+	filter := store.ExecutionFilter{
+		NodeName:  c.Query("node"),
+		Status:    c.Query("status"),
+		Direction: c.Query("direction"),
+	}
 
-	executions, err := h.store.ListExecutions(c.Request.Context(), nodeFilter)
+	if v := c.Query("requested_from"); v != "" {
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid requested_from timestamp"})
+			return
+		}
+		filter.RequestedFrom = &parsed
+	}
+	if v := c.Query("requested_to"); v != "" {
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid requested_to timestamp"})
+			return
+		}
+		filter.RequestedTo = &parsed
+	}
+	if filter.RequestedFrom != nil && filter.RequestedTo != nil && filter.RequestedFrom.After(*filter.RequestedTo) {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid requested time range: requested_from is after requested_to"})
+		return
+	}
+
+	if v := c.Query("before"); v != "" {
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid before timestamp"})
+			return
+		}
+		filter.Before = &parsed
+	}
+
+	if v := c.Query("limit"); v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil || parsed < 1 {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid limit"})
+			return
+		}
+		filter.Limit = parsed
+	}
+
+	executions, err := h.store.ListExecutions(c.Request.Context(), filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
 
-	sort.Slice(executions, func(i, j int) bool {
-		return executions[i].RequestedAt.After(executions[j].RequestedAt)
-	})
-
-	var beforeTime time.Time
-	if beforeStr != "" {
-		parsed, err := time.Parse(time.RFC3339, beforeStr)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid before timestamp"})
-			return
-		}
-		beforeTime = parsed
-	}
-
-	limit := 0
-	if limitStr != "" {
-		parsed, err := strconv.Atoi(limitStr)
-		if err != nil || parsed < 1 {
-			c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid limit"})
-			return
-		}
-		limit = parsed
-	}
-
-	var results []ExecutionStatus
+	results := make([]ExecutionStatus, 0, len(executions))
 	for _, exec := range executions {
-		if statusFilter != "" && string(exec.OverallStatus) != statusFilter {
-			continue
-		}
-		if directionFilter != "" && string(exec.Direction) != directionFilter {
-			continue
-		}
-		if !beforeTime.IsZero() && !exec.RequestedAt.Before(beforeTime) {
-			continue
-		}
 		results = append(results, ExecutionStatus{
 			ID:            exec.ID,
 			NodeName:      exec.NodeName,
@@ -196,14 +203,8 @@ func (h *SwitchHandler) List(c *gin.Context) {
 			ErrorCode:     exec.FinalErrorCode,
 			ErrorSummary:  exec.FinalErrorSummary,
 		})
-		if limit > 0 && len(results) >= limit {
-			break
-		}
 	}
 
-	if results == nil {
-		results = []ExecutionStatus{}
-	}
 	c.JSON(http.StatusOK, results)
 }
 

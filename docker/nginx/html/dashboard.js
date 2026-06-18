@@ -291,15 +291,61 @@
   }
 
   // Executions
+
+  // toLocalDateInputValue formats a Date as the YYYY-MM-DD string expected by
+  // <input type="date">, using local calendar fields.
+  function toLocalDateInputValue(d) {
+    var y = d.getFullYear();
+    var m = ('0' + (d.getMonth() + 1)).slice(-2);
+    var day = ('0' + d.getDate()).slice(-2);
+    return y + '-' + m + '-' + day;
+  }
+
+  // initExecutionDateRange seeds the From/To date inputs with the local range
+  // from seven days before today through today on first load.
+  function initExecutionDateRange() {
+    var fromInput = document.getElementById('history-from-filter');
+    var toInput = document.getElementById('history-to-filter');
+    if (!fromInput || !toInput) return;
+    if (fromInput.value && toInput.value) return;
+    var today = new Date();
+    var weekAgo = new Date();
+    weekAgo.setDate(today.getDate() - 7);
+    fromInput.value = toLocalDateInputValue(weekAgo);
+    toInput.value = toLocalDateInputValue(today);
+  }
+
+  // localDateToRFC3339 converts a YYYY-MM-DD input value into an RFC3339
+  // instant at the requested edge of that local calendar day. endOfDay selects
+  // 23:59:59 instead of 00:00:00.
+  function localDateToRFC3339(dateStr, endOfDay) {
+    if (!dateStr) return '';
+    var parts = dateStr.split('-');
+    if (parts.length !== 3) return '';
+    var y = parseInt(parts[0], 10);
+    var m = parseInt(parts[1], 10) - 1;
+    var d = parseInt(parts[2], 10);
+    var dt = endOfDay
+      ? new Date(y, m, d, 23, 59, 59, 0)
+      : new Date(y, m, d, 0, 0, 0, 0);
+    return dt.toISOString();
+  }
+
   async function loadExecutions(pageIndex) {
     if (pageIndex === undefined) pageIndex = 0;
     var nodeFilter = document.getElementById('history-node-filter').value;
     var statusFilter = document.getElementById('history-status-filter').value;
     var directionFilter = document.getElementById('history-direction-filter').value;
+    var fromFilter = document.getElementById('history-from-filter').value;
+    var toFilter = document.getElementById('history-to-filter').value;
     var url = '/v1/switches?limit=' + PAGE_SIZE;
     if (nodeFilter) url += '&node=' + encodeURIComponent(nodeFilter);
     if (statusFilter) url += '&status=' + encodeURIComponent(statusFilter);
     if (directionFilter) url += '&direction=' + encodeURIComponent(directionFilter);
+    var requestedFrom = localDateToRFC3339(fromFilter, false);
+    var requestedTo = localDateToRFC3339(toFilter, true);
+    if (requestedFrom) url += '&requested_from=' + encodeURIComponent(requestedFrom);
+    if (requestedTo) url += '&requested_to=' + encodeURIComponent(requestedTo);
     var cursor = state.execPageCursors[pageIndex];
     if (cursor) url += '&before=' + encodeURIComponent(cursor);
 
@@ -812,10 +858,21 @@
     state.execPageCursors = [null];
     loadExecutions(0);
   };
+  document.getElementById('history-from-filter').onchange = function () {
+    state.execPage = 0;
+    state.execPageCursors = [null];
+    loadExecutions(0);
+  };
+  document.getElementById('history-to-filter').onchange = function () {
+    state.execPage = 0;
+    state.execPageCursors = [null];
+    loadExecutions(0);
+  };
 
   // Init
   (async function init() {
     loadDashboardSettings();
+    initExecutionDateRange();
     await ensureToken();
     updateSlurmSettingsUI();
     checkHealth();

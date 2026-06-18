@@ -169,6 +169,112 @@ func TestDashboardJS_PaginationResetsOnFilterChange(t *testing.T) {
 	}
 }
 
+func TestDashboardHTML_ExecutionDateRangeControls(t *testing.T) {
+	htmlPath := "../../docker/nginx/html/index.html"
+	content, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("reading dashboard HTML: %v", err)
+	}
+	html := string(content)
+
+	required := []string{
+		`id="history-from-filter"`,
+		`id="history-to-filter"`,
+		`type="date"`,
+	}
+	for _, s := range required {
+		if !strings.Contains(html, s) {
+			t.Errorf("dashboard HTML missing execution date-range control: %s", s)
+		}
+	}
+}
+
+func TestDashboardJS_DefaultRecentSevenDayWindow(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	if !strings.Contains(js, "initExecutionDateRange") {
+		t.Error("dashboard JS should define initExecutionDateRange to seed the default window")
+	}
+	if !strings.Contains(js, "setDate(today.getDate() - 7)") {
+		t.Error("dashboard JS should default the From date to seven days before today")
+	}
+
+	// The default window must be initialized during init before loading executions.
+	initIdx := strings.Index(js, "async function init()")
+	if initIdx < 0 {
+		t.Fatal("dashboard JS should have an init function")
+	}
+	initBody := js[initIdx:]
+	seedIdx := strings.Index(initBody, "initExecutionDateRange()")
+	loadIdx := strings.Index(initBody, "loadExecutions(0)")
+	if seedIdx < 0 {
+		t.Error("init should call initExecutionDateRange()")
+	}
+	if loadIdx < 0 {
+		t.Fatal("init should call loadExecutions(0)")
+	}
+	if seedIdx > loadIdx {
+		t.Error("initExecutionDateRange() should run before loadExecutions(0) so the default window is applied")
+	}
+}
+
+func TestDashboardJS_DateRangeQueryParams(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	required := []string{
+		"history-from-filter",
+		"history-to-filter",
+		"localDateToRFC3339",
+		"&requested_from=",
+		"&requested_to=",
+	}
+	for _, s := range required {
+		if !strings.Contains(js, s) {
+			t.Errorf("dashboard JS missing date-range query construction element: %s", s)
+		}
+	}
+}
+
+func TestDashboardJS_DateRangeChangeResetsPagination(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	// Both date inputs must have onchange handlers that reset pagination to page 1.
+	for _, id := range []string{"history-from-filter", "history-to-filter"} {
+		marker := "getElementById('" + id + "').onchange"
+		idx := strings.Index(js, marker)
+		if idx < 0 {
+			t.Errorf("dashboard JS should register an onchange handler for %s", id)
+			continue
+		}
+		// Inspect the handler body up to the loadExecutions call.
+		body := js[idx:]
+		end := strings.Index(body, "loadExecutions(0)")
+		if end < 0 {
+			t.Errorf("%s handler should call loadExecutions(0)", id)
+			continue
+		}
+		handler := body[:end]
+		if !strings.Contains(handler, "state.execPage = 0") || !strings.Contains(handler, "state.execPageCursors = [null]") {
+			t.Errorf("%s handler should reset execPage and execPageCursors before reloading", id)
+		}
+	}
+}
+
 func TestDashboardJS_SwitchPayloads(t *testing.T) {
 	jsPath := "../../docker/nginx/html/dashboard.js"
 	content, err := os.ReadFile(jsPath)

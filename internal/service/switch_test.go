@@ -174,7 +174,7 @@ func TestRequestSwitchRejectsOpenStackToSlurmWhenNodeAlreadyOwnedBySlurm(t *test
 				t.Fatal("expected no admission events to be published")
 			}
 
-			executions, listErr := s.ListExecutions(context.Background(), "")
+			executions, listErr := s.ListExecutions(context.Background(), store.ExecutionFilter{})
 			if listErr != nil {
 				t.Fatalf("ListExecutions() error = %v", listErr)
 			}
@@ -251,7 +251,7 @@ func TestRequestSwitchReturnsDependencyErrorWhenSlurmLookupFails(t *testing.T) {
 		t.Fatal("expected no admission events to be published")
 	}
 
-	executions, listErr := s.ListExecutions(context.Background(), "")
+	executions, listErr := s.ListExecutions(context.Background(), store.ExecutionFilter{})
 	if listErr != nil {
 		t.Fatalf("ListExecutions() error = %v", listErr)
 	}
@@ -276,7 +276,7 @@ func TestRequestSwitchRejectsSlurmToOpenStackWithNodeName(t *testing.T) {
 		t.Fatalf("RequestSwitch() error = %q, want node_name rejection message", err.Error())
 	}
 
-	executions, listErr := s.ListExecutions(context.Background(), "")
+	executions, listErr := s.ListExecutions(context.Background(), store.ExecutionFilter{})
 	if listErr != nil {
 		t.Fatalf("ListExecutions() error = %v", listErr)
 	}
@@ -402,7 +402,7 @@ func TestRequestSwitchRejectsMissingEffectiveWorkloadIdentity(t *testing.T) {
 		t.Fatalf("RequestSwitch() error = %q, want workload identity requirement message", err.Error())
 	}
 
-	executions, _ := s.ListExecutions(context.Background(), "")
+	executions, _ := s.ListExecutions(context.Background(), store.ExecutionFilter{})
 	if len(executions) != 0 {
 		t.Fatalf("execution count = %d, want 0", len(executions))
 	}

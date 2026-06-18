@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -120,7 +121,7 @@ func TestListExecutions(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	all, err := s.ListExecutions(ctx, "")
+	all, err := s.ListExecutions(ctx, ExecutionFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,12 +129,54 @@ func TestListExecutions(t *testing.T) {
 		t.Fatalf("expected 3, got %d", len(all))
 	}
 
-	filtered, err := s.ListExecutions(ctx, "gpu-01")
+	filtered, err := s.ListExecutions(ctx, ExecutionFilter{NodeName: "gpu-01"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(filtered) != 2 {
 		t.Fatalf("expected 2, got %d", len(filtered))
+	}
+}
+
+func TestListExecutionsRequestedTimeRange(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+
+	for i, offset := range []time.Duration{0, time.Hour, 2 * time.Hour, 3 * time.Hour} {
+		exec := &domain.Execution{
+			ID: "exec-" + strconv.Itoa(i), NodeName: "gpu-01", Direction: domain.DirectionSlurmToOpenStack,
+			RequestedBy: "op", RequestedAt: base.Add(offset), CurrentState: domain.StateRequested,
+			DesiredOwner: domain.OwnerOpenStack, PreviousOwner: domain.OwnerSlurm,
+			OverallStatus: domain.OverallStatusActive,
+		}
+		if err := s.CreateExecution(ctx, exec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	from := base.Add(time.Hour)
+	to := base.Add(2 * time.Hour)
+	inWindow, err := s.ListExecutions(ctx, ExecutionFilter{RequestedFrom: &from, RequestedTo: &to})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inWindow) != 2 {
+		t.Fatalf("expected 2 in window, got %d", len(inWindow))
+	}
+	// Newest-first ordering.
+	if !inWindow[0].RequestedAt.Equal(to) || !inWindow[1].RequestedAt.Equal(from) {
+		t.Fatalf("unexpected order: %v, %v", inWindow[0].RequestedAt, inWindow[1].RequestedAt)
+	}
+
+	// Pagination inside the window: before the newest, limit 1 -> the older one only.
+	before := to
+	paged, err := s.ListExecutions(ctx, ExecutionFilter{RequestedFrom: &from, RequestedTo: &to, Before: &before, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paged) != 1 || !paged[0].RequestedAt.Equal(from) {
+		t.Fatalf("unexpected paged result: %+v", paged)
 	}
 }
 

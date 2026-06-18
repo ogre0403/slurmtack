@@ -2,7 +2,13 @@
 
 ### Requirement: Browse execution history and inspect step timelines
 
-The dashboard SHALL provide an execution-focused right-side panel with a paginated execution list and a drilldown panel for an individual execution. The execution list MUST include recent active executions and prior executions returned by the API, show 10 executions per page by default, and display each execution's direction, node binding when known, `current_state`, `overall_status`, and request time. Selecting an execution MUST show the execution summary and current state in the detail panel, and the drilldown panel MUST render the ordered step timeline returned for the selected execution with fine-grained metadata for each step, including step name, sequence, status, started time, ended time when present, host when present, retry count, exit code or failure classification when present, step `error_summary` when present, and any recorded output or snapshot paths as secondary detail. The dashboard MAY continue to offer node and outcome filters, but changing filters MUST refresh the execution list and reset pagination to the first page.
+The dashboard SHALL provide an execution-focused right-side panel with a paginated execution list and a drilldown panel for an individual execution. The dashboard MUST offer node, status, direction, and requested-date-range filters for that execution list. On initial load, the requested-date-range filter MUST default to the operator's local calendar dates from seven days before today through today. The execution list MUST include recent active executions and prior executions returned by the API that match the selected filters, show 10 executions per page by default, and display each execution's direction, node binding when known, `current_state`, `overall_status`, and request time. Selecting an execution MUST show the execution summary and current state in the detail panel, and the drilldown panel MUST render the ordered step timeline returned for the selected execution with fine-grained metadata for each step, including step name, sequence, status, started time, ended time when present, host when present, retry count, exit code or failure classification when present, step `error_summary` when present, and any recorded output or snapshot paths as secondary detail. Changing any execution-list filter, including the requested date range, MUST refresh the execution list and reset pagination to the first page.
+
+#### Scenario: Execution history defaults to the recent seven-day window
+
+- **WHEN** the operator opens the dashboard execution panel
+- **THEN** the dashboard initializes the requested-date-range filter to the local date seven days before today through today
+- **AND** it requests only executions inside that default window
 
 #### Scenario: Inspect execution details from the execution list
 
@@ -48,9 +54,9 @@ The dashboard SHALL provide an execution-focused right-side panel with a paginat
 - **THEN** the row shows the execution's current state
 - **AND** the row includes a cancel control without requiring the operator to open the detail panel first
 
-#### Scenario: Filter execution list by node or outcome
+#### Scenario: Filter execution list by node, outcome, direction, or requested date range
 
-- **WHEN** the operator applies a filter such as `node=gpu-01` or `status=failed`
+- **WHEN** the operator applies a filter such as `node=gpu-01`, `status=failed`, or a narrower requested date range
 - **THEN** the dashboard refreshes the execution list using those filters
 - **AND** it resets the paginated view to the first page of matching executions
 

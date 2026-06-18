@@ -149,7 +149,7 @@ func (h *InventoryHandler) Get(c *gin.Context) {
 	}
 	wg.Wait()
 
-	allExecs, err := h.store.ListExecutions(ctx, "")
+	allExecs, err := h.store.ListExecutions(ctx, store.ExecutionFilter{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "failed to list executions: " + err.Error()})
 		return
