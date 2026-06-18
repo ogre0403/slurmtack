@@ -253,7 +253,7 @@
       }
 
       card.innerHTML =
-        '<h3>' + escapeHtml(node.node_name) + ' <span class="owner-badge ' + ownerClass + '">' + escapeHtml(node.owner) + '</span></h3>' +
+        '<h3>' + escapeHtml(node.node_name) + '<button class="copy-node-name" title="Copy node name" onclick="copyNodeName(\'' + escapeAttr(node.node_name) + '\', this)">&#x2398;</button> <span class="owner-badge ' + ownerClass + '">' + escapeHtml(node.owner) + '</span></h3>' +
         '<div class="meta">Slurm: ' + escapeHtml(slurmState) + '</div>' +
         '<div class="meta">OpenStack: ' + escapeHtml(osEnabled) + '</div>' +
         activeInfo + lastInfo +
@@ -586,6 +586,31 @@
   };
 
   // Utilities
+  window.copyNodeName = function copyNodeName(name, btn) {
+    function flash() {
+      var orig = btn.textContent;
+      btn.textContent = '\u2713';
+      btn.classList.add('copied');
+      setTimeout(function () {
+        btn.textContent = orig;
+        btn.classList.remove('copied');
+      }, 1200);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(name).then(flash);
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = name;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (_) {}
+      document.body.removeChild(ta);
+      flash();
+    }
+  }
+
   function escapeHtml(s) {
     if (!s) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
