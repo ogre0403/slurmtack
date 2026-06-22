@@ -15,9 +15,11 @@ import (
 )
 
 type recordingSSHRunner struct {
-	requests []remote.CommandRequest
-	result   *remote.CommandResult
-	err      error
+	requests      []remote.CommandRequest
+	stageRequests []remote.StageRequest
+	result        *remote.CommandResult
+	err           error
+	stageErr      error
 }
 
 func (r *recordingSSHRunner) Execute(_ context.Context, req remote.CommandRequest) (*remote.CommandResult, error) {
@@ -28,6 +30,11 @@ func (r *recordingSSHRunner) Execute(_ context.Context, req remote.CommandReques
 	return &remote.CommandResult{ExitCode: 0}, r.err
 }
 
+func (r *recordingSSHRunner) Stage(_ context.Context, req remote.StageRequest) error {
+	r.stageRequests = append(r.stageRequests, req)
+	return r.stageErr
+}
+
 type scriptedSSHResponse struct {
 	result *remote.CommandResult
 	err    error
@@ -36,9 +43,17 @@ type scriptedSSHResponse struct {
 type scriptedSSHRunner struct {
 	t              *testing.T
 	requests       []remote.CommandRequest
+	stageRequests  []remote.StageRequest
+	stageErr       error
 	responses      []scriptedSSHResponse
 	defaultResp    *scriptedSSHResponse
 	onBeforeReturn func(call int, req remote.CommandRequest)
+}
+
+func (r *scriptedSSHRunner) Stage(_ context.Context, req remote.StageRequest) error {
+	r.t.Helper()
+	r.stageRequests = append(r.stageRequests, req)
+	return r.stageErr
 }
 
 func (r *scriptedSSHRunner) Execute(_ context.Context, req remote.CommandRequest) (*remote.CommandResult, error) {

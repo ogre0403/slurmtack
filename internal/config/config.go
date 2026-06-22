@@ -37,33 +37,37 @@ type Config struct {
 	SSHOptions              string
 	SSHPrivateKeyPath       string
 	SSHLoginNode            string
+	GPUPassthroughScriptDir string
+	RemoteStagingDir        string
 	JWTSigningKey           []byte
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		ListenAddr:          os.Getenv("LISTEN_ADDR"),
-		DBPath:              os.Getenv("DB_PATH"),
-		SlurmAPIURL:         os.Getenv("SLURM_API_URL"),
-		SlurmJWTToken:       os.Getenv("SLURM_JWT_TOKEN"),
-		SlurmAPIUser:        os.Getenv("SLURM_API_USER"),
-		SlurmAdminUser:      os.Getenv("SLURM_ADMIN_USER"),
-		SlurmAdminJWTToken:  os.Getenv("SLURM_ADMIN_JWT_TOKEN"),
-		OSAuthURL:           os.Getenv("OS_AUTH_URL"),
-		OSProjectName:       os.Getenv("OS_PROJECT_NAME"),
-		OSUsername:          os.Getenv("OS_USERNAME"),
-		OSPassword:          os.Getenv("OS_PASSWORD"),
-		OSUserDomainName:    os.Getenv("OS_USER_DOMAIN_NAME"),
-		OSProjectDomainName: os.Getenv("OS_PROJECT_DOMAIN_NAME"),
-		AMQPURL:             os.Getenv("AMQP_URL"),
-		PlaceholderSIFPath:  os.Getenv("SLURM_SIF_PATH"),
-		PlaceholderSIFFile:  os.Getenv("SLURM_SIF_FILE"),
-		SlurmCloudPartition: os.Getenv("SLURM_CLOUD_PARTITION"),
-		SSHUser:             os.Getenv("SSH_USER"),
-		SSHPort:             os.Getenv("SSH_PORT"),
-		SSHOptions:          os.Getenv("SSH_OPTIONS"),
-		SSHPrivateKeyPath:   os.Getenv("SSH_PRIVATE_KEY_PATH"),
-		SSHLoginNode:        os.Getenv("SSH_LOGIN_NODE"),
+		ListenAddr:              os.Getenv("LISTEN_ADDR"),
+		DBPath:                  os.Getenv("DB_PATH"),
+		SlurmAPIURL:             os.Getenv("SLURM_API_URL"),
+		SlurmJWTToken:           os.Getenv("SLURM_JWT_TOKEN"),
+		SlurmAPIUser:            os.Getenv("SLURM_API_USER"),
+		SlurmAdminUser:          os.Getenv("SLURM_ADMIN_USER"),
+		SlurmAdminJWTToken:      os.Getenv("SLURM_ADMIN_JWT_TOKEN"),
+		OSAuthURL:               os.Getenv("OS_AUTH_URL"),
+		OSProjectName:           os.Getenv("OS_PROJECT_NAME"),
+		OSUsername:              os.Getenv("OS_USERNAME"),
+		OSPassword:              os.Getenv("OS_PASSWORD"),
+		OSUserDomainName:        os.Getenv("OS_USER_DOMAIN_NAME"),
+		OSProjectDomainName:     os.Getenv("OS_PROJECT_DOMAIN_NAME"),
+		AMQPURL:                 os.Getenv("AMQP_URL"),
+		PlaceholderSIFPath:      os.Getenv("SLURM_SIF_PATH"),
+		PlaceholderSIFFile:      os.Getenv("SLURM_SIF_FILE"),
+		SlurmCloudPartition:     os.Getenv("SLURM_CLOUD_PARTITION"),
+		SSHUser:                 os.Getenv("SSH_USER"),
+		SSHPort:                 os.Getenv("SSH_PORT"),
+		SSHOptions:              os.Getenv("SSH_OPTIONS"),
+		SSHPrivateKeyPath:       os.Getenv("SSH_PRIVATE_KEY_PATH"),
+		SSHLoginNode:            os.Getenv("SSH_LOGIN_NODE"),
+		GPUPassthroughScriptDir: os.Getenv("GPU_PASSTHROUGH_SCRIPT_DIR"),
+		RemoteStagingDir:        os.Getenv("REMOTE_STAGING_DIR"),
 	}
 
 	cfg.SSHPollInterval = parseDuration(os.Getenv("SSH_POLL_INTERVAL"), 10*time.Second)

@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -110,6 +111,163 @@ func TestExecSSHExecutorRenderInvocation(t *testing.T) {
 	}
 	if !reflect.DeepEqual(invocation.args, want) {
 		t.Fatalf("renderInvocation().args = %#v, want %#v", invocation.args, want)
+	}
+}
+
+func TestExecSSHExecutorRenderCopyInvocation(t *testing.T) {
+	executor := NewExecSSHExecutor(SSHExecutorConfig{
+		User:         "slurm",
+		Port:         "2222",
+		Options:      []string{"StrictHostKeyChecking=accept-new", "ConnectTimeout=5"},
+		IdentityFile: "/run/secrets/node-key",
+	}, nil)
+
+	invocation := executor.renderCopyInvocation(StageRequest{
+		Host:       "gpu-01",
+		LocalPath:  "/local/scripts/reconfigure.sh",
+		RemotePath: "/tmp/exec-1/reconfigure.sh",
+	})
+	// scp reuses the same transport config as ssh but takes the port via -P.
+	want := []string{
+		"-o", "BatchMode=yes",
+		"-P", "2222",
+		"-i", "/run/secrets/node-key",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=5",
+		"/local/scripts/reconfigure.sh",
+		"slurm@gpu-01:/tmp/exec-1/reconfigure.sh",
+	}
+
+	if invocation.target != "slurm@gpu-01" {
+		t.Fatalf("renderCopyInvocation().target = %q, want %q", invocation.target, "slurm@gpu-01")
+	}
+	if invocation.remoteSpec != "slurm@gpu-01:/tmp/exec-1/reconfigure.sh" {
+		t.Fatalf("renderCopyInvocation().remoteSpec = %q, want %q", invocation.remoteSpec, "slurm@gpu-01:/tmp/exec-1/reconfigure.sh")
+	}
+	if !reflect.DeepEqual(invocation.args, want) {
+		t.Fatalf("renderCopyInvocation().args = %#v, want %#v", invocation.args, want)
+	}
+}
+
+func TestExecSSHExecutorCopyLogsAndRendersScp(t *testing.T) {
+	binDir := t.TempDir()
+	argsFile := filepath.Join(binDir, "scp.args")
+	scpPath := filepath.Join(binDir, "scp")
+	scpScript := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SCP_ARGS_FILE\"\n"
+	if err := os.WriteFile(scpPath, []byte(scpScript), 0o755); err != nil {
+		t.Fatalf("write fake scp: %v", err)
+	}
+	localFile := filepath.Join(binDir, "reconfigure.sh")
+	if err := os.WriteFile(localFile, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write local file: %v", err)
+	}
+
+	t.Setenv("SCP_ARGS_FILE", argsFile)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	logger, captured := newCaptureLogger()
+	executor := NewExecSSHExecutor(SSHExecutorConfig{
+		User:         "slurm",
+		Port:         "2222",
+		Options:      []string{"StrictHostKeyChecking=accept-new"},
+		IdentityFile: "/run/secrets/node-key",
+	}, logger)
+
+	err := executor.Copy(context.Background(), StageRequest{
+		Host:        "gpu-01",
+		LocalPath:   localFile,
+		RemotePath:  "/tmp/exec-1/reconfigure.sh",
+		ExecutionID: "exec-1",
+		StepName:    "stage_reconfigure",
+		Timeout:     5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Copy() error = %v", err)
+	}
+
+	argsData, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read captured scp args: %v", err)
+	}
+	gotArgs := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+	wantArgs := []string{
+		"-o", "BatchMode=yes",
+		"-P", "2222",
+		"-i", "/run/secrets/node-key",
+		"-o", "StrictHostKeyChecking=accept-new",
+		localFile,
+		"slurm@gpu-01:/tmp/exec-1/reconfigure.sh",
+	}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("scp argv = %#v, want %#v", gotArgs, wantArgs)
+	}
+
+	dispatch := captured.find(trace.EventSCPDispatch)
+	if dispatch == nil {
+		t.Fatal("expected scp.dispatch log")
+	}
+	if dispatch.Attrs["target"] != "slurm@gpu-01" {
+		t.Fatalf("scp.dispatch target = %q, want %q", dispatch.Attrs["target"], "slurm@gpu-01")
+	}
+	if dispatch.Attrs["remote_path"] != "/tmp/exec-1/reconfigure.sh" {
+		t.Fatalf("scp.dispatch remote_path = %q, want %q", dispatch.Attrs["remote_path"], "/tmp/exec-1/reconfigure.sh")
+	}
+	if dispatch.Attrs["execution_id"] != "exec-1" {
+		t.Fatalf("scp.dispatch execution_id = %q, want %q", dispatch.Attrs["execution_id"], "exec-1")
+	}
+	if dispatch.Attrs["step_name"] != "stage_reconfigure" {
+		t.Fatalf("scp.dispatch step_name = %q, want %q", dispatch.Attrs["step_name"], "stage_reconfigure")
+	}
+}
+
+func TestExecSSHExecutorCopyPropagatesFailure(t *testing.T) {
+	binDir := t.TempDir()
+	scpPath := filepath.Join(binDir, "scp")
+	// Fake scp that fails with a diagnostic on stderr.
+	scpScript := "#!/bin/sh\necho 'scp: connection refused' >&2\nexit 1\n"
+	if err := os.WriteFile(scpPath, []byte(scpScript), 0o755); err != nil {
+		t.Fatalf("write fake scp: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	executor := NewExecSSHExecutor(SSHExecutorConfig{User: "slurm"}, nil)
+	err := executor.Copy(context.Background(), StageRequest{
+		Host:       "gpu-01",
+		LocalPath:  "/local/reconfigure.sh",
+		RemotePath: "/tmp/reconfigure.sh",
+		Timeout:    5 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("Copy() error = nil, want failure")
+	}
+	if !strings.Contains(err.Error(), "scp command failed") {
+		t.Fatalf("Copy() error = %q, want it to mention scp command failed", err.Error())
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("Copy() error = %q, want it to include scp stderr", err.Error())
+	}
+}
+
+func TestSSHRunnerStagePropagatesError(t *testing.T) {
+	executor := &capturingSSHExecutor{copyErr: errors.New("scp boom")}
+	runner := NewSSHRunner(executor)
+
+	err := runner.Stage(context.Background(), StageRequest{
+		Host:       "gpu-01",
+		LocalPath:  "/local/reconfigure.sh",
+		RemotePath: "/tmp/reconfigure.sh",
+	})
+	if err == nil {
+		t.Fatal("Stage() error = nil, want failure")
+	}
+	if !executor.copyCalled {
+		t.Fatal("expected executor.Copy to be called")
+	}
+	if executor.stageReq.RemotePath != "/tmp/reconfigure.sh" {
+		t.Fatalf("executor stageReq.RemotePath = %q, want %q", executor.stageReq.RemotePath, "/tmp/reconfigure.sh")
+	}
+	if !strings.Contains(err.Error(), "gpu-01") {
+		t.Fatalf("Stage() error = %q, want it to mention host", err.Error())
 	}
 }
 

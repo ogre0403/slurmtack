@@ -14,6 +14,7 @@ const (
 	EventActionSucceeded     = "action.succeeded"
 	EventActionFailed        = "action.failed"
 	EventSSHDispatch         = "ssh.dispatch"
+	EventSCPDispatch         = "scp.dispatch"
 	EventTransitionRequested = "transition.requested"
 	EventTransitionSucceeded = "transition.succeeded"
 	EventTransitionFailed    = "transition.failed"

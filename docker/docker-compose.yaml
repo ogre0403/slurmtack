@@ -33,6 +33,7 @@ services:
       - .:/data
       - ${HOME}/.ssh/id_rsa:/run/secrets/slurmtack-ssh-key:ro
       - /etc/hosts:/etc/hosts:ro
+      - ../scripts:/slurmtack/scripts:ro
     restart: unless-stopped
 
   rabbitmq:

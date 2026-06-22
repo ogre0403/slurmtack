@@ -143,11 +143,13 @@ func main() {
 	runner := engine.NewRunner(sqlStore, baseLogger)
 	sshRunner := buildSSHRunner(cfg, baseLogger)
 	orch := orchestrator.New(sqlStore, runner, sshRunner, slurmClient, osClient, orchestrator.Config{
-		TickInterval:       2 * time.Second,
-		SSHPollInterval:    cfg.SSHPollInterval,
-		SSHPollTimeout:     cfg.SSHPollTimeout,
-		PlaceholderSIFPath: cfg.PlaceholderSIFPath,
-		PlaceholderSIFFile: cfg.PlaceholderSIFFile,
+		TickInterval:            2 * time.Second,
+		SSHPollInterval:         cfg.SSHPollInterval,
+		SSHPollTimeout:          cfg.SSHPollTimeout,
+		PlaceholderSIFPath:      cfg.PlaceholderSIFPath,
+		PlaceholderSIFFile:      cfg.PlaceholderSIFFile,
+		GPUPassthroughScriptDir: cfg.GPUPassthroughScriptDir,
+		RemoteStagingDir:        cfg.RemoteStagingDir,
 	}, baseLogger)
 
 	// Start MQ consumer supervision.

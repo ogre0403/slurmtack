@@ -22,11 +22,18 @@ type worker struct {
 }
 
 type Config struct {
-	TickInterval           time.Duration
-	SSHPollInterval        time.Duration
-	SSHPollTimeout         time.Duration
-	PlaceholderSIFPath     string
-	PlaceholderSIFFile     string
+	TickInterval       time.Duration
+	SSHPollInterval    time.Duration
+	SSHPollTimeout     time.Duration
+	PlaceholderSIFPath string
+	PlaceholderSIFFile string
+	// GPUPassthroughScriptDir is the local directory holding the GPU passthrough
+	// reconfigure.sh, verify.sh, and lib.sh scripts. When empty, GPU passthrough
+	// staging and execution are skipped (the standalone scripts can still be run
+	// manually). RemoteStagingDir is the base remote directory the scripts are
+	// copied into; it defaults to /tmp when empty.
+	GPUPassthroughScriptDir string
+	RemoteStagingDir        string
 }
 
 type Orchestrator struct {
@@ -759,6 +766,13 @@ func (o *Orchestrator) doReconfigure(ctx context.Context, exec *domain.Execution
 		}
 	}
 
+	// Stage and run the GPU passthrough reconfiguration script in the
+	// direction-appropriate mode before reboot. A staging or execution failure
+	// must block the transition into rebooting.
+	if err := o.reconfigureGPUPassthrough(ctx, exec); err != nil {
+		return o.failStep(ctx, step, err)
+	}
+
 	if err := o.steps.FinishStep(ctx, step, domain.StepStatusSucceeded); err != nil {
 		return err
 	}
@@ -913,6 +927,13 @@ func (o *Orchestrator) doAttach(ctx context.Context, exec *domain.Execution) err
 	step, err := o.steps.StartStep(ctx, exec.ID, domain.StepAttachTarget, exec.NodeName)
 	if err != nil {
 		return err
+	}
+
+	// Verify the post-reboot GPU passthrough state before performing any
+	// target-side attach action. A mismatch (or staging/execution failure) must
+	// block attachment for either direction.
+	if err := o.verifyGPUPassthrough(ctx, exec); err != nil {
+		return o.failStep(ctx, step, err)
 	}
 
 	if exec.Direction == domain.DirectionSlurmToOpenStack {

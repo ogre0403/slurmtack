@@ -33,6 +33,10 @@ func (r *fakeRunner) Execute(_ context.Context, req remote.CommandRequest) (*rem
 	return res, err
 }
 
+func (r *fakeRunner) Stage(_ context.Context, _ remote.StageRequest) error {
+	return nil
+}
+
 func newTestProvider(t *testing.T, runner remote.Runner) (*SSHAdminTokenProvider, *store.MemoryStore) {
 	t.Helper()
 	s := store.NewMemoryStore()

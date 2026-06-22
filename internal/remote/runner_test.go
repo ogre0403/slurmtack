@@ -7,18 +7,27 @@ import (
 )
 
 type capturingSSHExecutor struct {
-	req      CommandRequest
-	stdout   string
-	stderr   string
-	exitCode int
-	err      error
-	called   bool
+	req        CommandRequest
+	stdout     string
+	stderr     string
+	exitCode   int
+	err        error
+	called     bool
+	copyCalled bool
+	copyErr    error
+	stageReq   StageRequest
 }
 
 func (e *capturingSSHExecutor) Run(_ context.Context, req CommandRequest) (stdout, stderr string, exitCode int, err error) {
 	e.called = true
 	e.req = req
 	return e.stdout, e.stderr, e.exitCode, e.err
+}
+
+func (e *capturingSSHExecutor) Copy(_ context.Context, req StageRequest) error {
+	e.copyCalled = true
+	e.stageReq = req
+	return e.copyErr
 }
 
 func TestSSHRunnerExecutePreservesCommandPayload(t *testing.T) {

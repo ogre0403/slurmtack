@@ -12,7 +12,7 @@
 		"vscode": {
 			"extensions": [
 				"isudox.vscode-jetbrains-keybindings",
-				"vtkn.amazon-bedrock-copilot-chat",
+				"arifum.bedrock-vscode-chat",
 				"golang.Go",
 				"openai.chatgpt",
 				"onnovalkering.vscode-singularity",
