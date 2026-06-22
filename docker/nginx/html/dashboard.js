@@ -7,10 +7,29 @@
   var SLURM_TOKEN_KEY = 'slurmtack_slurm_user_token';
   var SLURM_ACCOUNT_KEY = 'slurmtack_slurm_account';
   var SLURM_SIF_KEY = 'slurmtack_placeholder_sif_file';
+  var SLURM_REMEMBER_TOKEN_KEY = 'slurmtack_remember_token';
+
+  var _slurmStorageExpiryTimer = null;
 
   function loadSlurmSettingsFromStorage() {
+    var rememberToken = localStorage.getItem(SLURM_REMEMBER_TOKEN_KEY) === '1';
+    var storedLocalToken = localStorage.getItem(SLURM_TOKEN_KEY) || '';
+    // If the JWT stored in localStorage has expired, wipe all persisted settings.
+    if (storedLocalToken) {
+      var exp = decodeSlurmExpiry(storedLocalToken);
+      if (exp !== null && Math.floor(Date.now() / 1000) >= exp) {
+        localStorage.removeItem(SLURM_TOKEN_KEY);
+        localStorage.removeItem(SLURM_REMEMBER_TOKEN_KEY);
+        localStorage.removeItem(SLURM_ACCOUNT_KEY);
+        localStorage.removeItem(SLURM_SIF_KEY);
+        return { slurm_user_token: '', slurm_account: '', placeholder_sif_file: '' };
+      }
+    }
+    var slurmToken = rememberToken
+      ? storedLocalToken
+      : (sessionStorage.getItem(SLURM_TOKEN_KEY) || '');
     return {
-      slurm_user_token: sessionStorage.getItem(SLURM_TOKEN_KEY) || '',
+      slurm_user_token: slurmToken,
       slurm_account: localStorage.getItem(SLURM_ACCOUNT_KEY) || '',
       placeholder_sif_file: localStorage.getItem(SLURM_SIF_KEY) || ''
     };
@@ -710,6 +729,34 @@
     } catch (e) { return null; }
   }
 
+  // scheduleSlurmStorageExpiry arranges for all localStorage Slurm keys to be
+  // cleared automatically when the JWT stored in localStorage expires.
+  // Pass null/empty token to cancel any pending timer without scheduling a new one.
+  function scheduleSlurmStorageExpiry(token) {
+    if (_slurmStorageExpiryTimer !== null) {
+      clearTimeout(_slurmStorageExpiryTimer);
+      _slurmStorageExpiryTimer = null;
+    }
+    if (!token) return;
+    var exp = decodeSlurmExpiry(token);
+    if (exp === null) return;
+    var msUntilExpiry = exp * 1000 - Date.now();
+    if (msUntilExpiry <= 0) return;
+    _slurmStorageExpiryTimer = setTimeout(function () {
+      _slurmStorageExpiryTimer = null;
+      localStorage.removeItem(SLURM_TOKEN_KEY);
+      localStorage.removeItem(SLURM_REMEMBER_TOKEN_KEY);
+      localStorage.removeItem(SLURM_ACCOUNT_KEY);
+      localStorage.removeItem(SLURM_SIF_KEY);
+      state.slurmSettings = { slurm_user_token: '', slurm_account: '', placeholder_sif_file: '' };
+      state.slurmDerivedUser = '';
+      state.token = '';
+      sessionStorage.removeItem(SENSITIVE_TOKEN_KEY);
+      updateSlurmSettingsUI();
+      showError('Your Slurm Token has expired. Please re-enter it.');
+    }, msUntilExpiry);
+  }
+
   function renderSlurmExpiry(exp) {
     var el = document.getElementById('slurm-token-expiry');
     if (!el) return;
@@ -800,6 +847,7 @@
       document.getElementById('slurm-token-input').value = state.slurmSettings.slurm_user_token;
       document.getElementById('slurm-account-input').value = state.slurmSettings.slurm_account;
       document.getElementById('slurm-sif-input').value = state.slurmSettings.placeholder_sif_file;
+      document.getElementById('slurm-remember-token').checked = localStorage.getItem(SLURM_REMEMBER_TOKEN_KEY) === '1';
       updateSlurmSettingsUI();
     }
   };
@@ -817,15 +865,24 @@
   };
 
   window.saveSlurmSettings = async function () {
-    var previousSlurmToken = sessionStorage.getItem(SLURM_TOKEN_KEY) || '';
+    var previousSlurmToken = localStorage.getItem(SLURM_TOKEN_KEY) || sessionStorage.getItem(SLURM_TOKEN_KEY) || '';
     state.slurmSettings.slurm_user_token = document.getElementById('slurm-token-input').value.trim();
     state.slurmSettings.slurm_account = document.getElementById('slurm-account-input').value.trim();
     state.slurmSettings.placeholder_sif_file = document.getElementById('slurm-sif-input').value.trim();
     state.slurmDerivedUser = decodeSlurmUser(state.slurmSettings.slurm_user_token);
     var tokenChanged = previousSlurmToken !== state.slurmSettings.slurm_user_token;
-    sessionStorage.setItem(SLURM_TOKEN_KEY, state.slurmSettings.slurm_user_token);
+    var rememberToken = document.getElementById('slurm-remember-token').checked;
+    localStorage.setItem(SLURM_REMEMBER_TOKEN_KEY, rememberToken ? '1' : '0');
+    if (rememberToken) {
+      localStorage.setItem(SLURM_TOKEN_KEY, state.slurmSettings.slurm_user_token);
+      sessionStorage.removeItem(SLURM_TOKEN_KEY);
+    } else {
+      sessionStorage.setItem(SLURM_TOKEN_KEY, state.slurmSettings.slurm_user_token);
+      localStorage.removeItem(SLURM_TOKEN_KEY);
+    }
     localStorage.setItem(SLURM_ACCOUNT_KEY, state.slurmSettings.slurm_account);
     localStorage.setItem(SLURM_SIF_KEY, state.slurmSettings.placeholder_sif_file);
+    scheduleSlurmStorageExpiry(rememberToken ? state.slurmSettings.slurm_user_token : null);
 
     if (!state.slurmSettings.slurm_user_token || tokenChanged) {
       state.token = '';
@@ -854,11 +911,14 @@
   };
 
   window.clearSlurmSettings = function () {
+    scheduleSlurmStorageExpiry(null);
     state.slurmSettings = { slurm_user_token: '', slurm_account: '', placeholder_sif_file: '' };
     state.slurmDerivedUser = '';
     state.token = '';
     sessionStorage.removeItem(SENSITIVE_TOKEN_KEY);
     sessionStorage.removeItem(SLURM_TOKEN_KEY);
+    localStorage.removeItem(SLURM_TOKEN_KEY);
+    localStorage.removeItem(SLURM_REMEMBER_TOKEN_KEY);
     localStorage.removeItem(SLURM_ACCOUNT_KEY);
     localStorage.removeItem(SLURM_SIF_KEY);
     document.getElementById('slurm-token-input').value = '';
@@ -898,6 +958,7 @@
   (async function init() {
     loadDashboardSettings();
     initExecutionDateRange();
+    scheduleSlurmStorageExpiry(localStorage.getItem(SLURM_TOKEN_KEY));
     await ensureToken();
     updateSlurmSettingsUI();
     checkHealth();

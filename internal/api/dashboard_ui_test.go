@@ -720,7 +720,7 @@ func TestDashboardJS_SaveSlurmSettingsRefreshesSessionOnTokenChange(t *testing.T
 	}
 
 	required := []string{
-		"var previousSlurmToken = sessionStorage.getItem(SLURM_TOKEN_KEY) || ''",
+		"var previousSlurmToken = localStorage.getItem(SLURM_TOKEN_KEY) || sessionStorage.getItem(SLURM_TOKEN_KEY) || ''",
 		"var tokenChanged = previousSlurmToken !== state.slurmSettings.slurm_user_token",
 		"if (!state.slurmSettings.slurm_user_token || tokenChanged)",
 		"sessionStorage.removeItem(SENSITIVE_TOKEN_KEY)",
@@ -964,5 +964,146 @@ func TestHealthEndpoint_Failure(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, `"status":"ok"`) {
 		t.Errorf("expected healthy response, got: %s", body)
+	}
+}
+
+func TestDashboardJS_SlurmStorageExpiresWithJWT(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	// A timer variable must exist to hold the pending expiry handle.
+	if !strings.Contains(js, "_slurmStorageExpiryTimer") {
+		t.Error("dashboard JS should define _slurmStorageExpiryTimer to track the pending expiry timeout")
+	}
+
+	// The scheduler function must be defined.
+	if !strings.Contains(js, "function scheduleSlurmStorageExpiry") {
+		t.Error("dashboard JS should define scheduleSlurmStorageExpiry")
+	}
+
+	// On expiry the scheduler must remove all four localStorage keys.
+	schedIdx := strings.Index(js, "function scheduleSlurmStorageExpiry")
+	if schedIdx < 0 {
+		t.Fatal("scheduleSlurmStorageExpiry not found")
+	}
+	// Grab enough of the function body to cover the setTimeout callback.
+	schedBody := js[schedIdx:]
+	if nextIdx := strings.Index(schedBody[1:], "\n  function "); nextIdx > 0 {
+		schedBody = schedBody[:nextIdx+1]
+	}
+	for _, key := range []string{
+		"localStorage.removeItem(SLURM_TOKEN_KEY)",
+		"localStorage.removeItem(SLURM_REMEMBER_TOKEN_KEY)",
+		"localStorage.removeItem(SLURM_ACCOUNT_KEY)",
+		"localStorage.removeItem(SLURM_SIF_KEY)",
+	} {
+		if !strings.Contains(schedBody, key) {
+			t.Errorf("scheduleSlurmStorageExpiry should remove %s on expiry", key)
+		}
+	}
+
+	// The scheduler must also reset in-memory state and show an error.
+	if !strings.Contains(schedBody, "state.slurmSettings") {
+		t.Error("scheduleSlurmStorageExpiry should reset state.slurmSettings on expiry")
+	}
+	if !strings.Contains(schedBody, "showError") {
+		t.Error("scheduleSlurmStorageExpiry should call showError to inform the user")
+	}
+}
+
+func TestDashboardJS_SlurmStorageClearedOnLoadIfJWTExpired(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	loadIdx := strings.Index(js, "function loadSlurmSettingsFromStorage")
+	if loadIdx < 0 {
+		t.Fatal("dashboard JS should define loadSlurmSettingsFromStorage")
+	}
+	nextFuncIdx := strings.Index(js[loadIdx+1:], "\n  function ")
+	var loadBody string
+	if nextFuncIdx > 0 {
+		loadBody = js[loadIdx : loadIdx+1+nextFuncIdx]
+	} else {
+		loadBody = js[loadIdx:]
+	}
+
+	// Must call decodeSlurmExpiry to inspect the stored token.
+	if !strings.Contains(loadBody, "decodeSlurmExpiry") {
+		t.Error("loadSlurmSettingsFromStorage should call decodeSlurmExpiry to check the stored token")
+	}
+	// Must clear all four keys if the token is already expired.
+	for _, key := range []string{
+		"localStorage.removeItem(SLURM_TOKEN_KEY)",
+		"localStorage.removeItem(SLURM_REMEMBER_TOKEN_KEY)",
+		"localStorage.removeItem(SLURM_ACCOUNT_KEY)",
+		"localStorage.removeItem(SLURM_SIF_KEY)",
+	} {
+		if !strings.Contains(loadBody, key) {
+			t.Errorf("loadSlurmSettingsFromStorage should remove %s when the JWT is already expired", key)
+		}
+	}
+}
+
+func TestDashboardJS_ScheduleExpiryCalledOnSaveAndInit(t *testing.T) {
+	jsPath := "../../docker/nginx/html/dashboard.js"
+	content, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("reading dashboard JS: %v", err)
+	}
+	js := string(content)
+
+	// saveSlurmSettings must call scheduleSlurmStorageExpiry.
+	saveIdx := strings.Index(js, "saveSlurmSettings = async function")
+	if saveIdx < 0 {
+		t.Fatal("dashboard JS should define saveSlurmSettings")
+	}
+	nextWin := strings.Index(js[saveIdx+1:], "window.")
+	var saveBody string
+	if nextWin > 0 {
+		saveBody = js[saveIdx : saveIdx+1+nextWin]
+	} else {
+		saveBody = js[saveIdx:]
+	}
+	if !strings.Contains(saveBody, "scheduleSlurmStorageExpiry") {
+		t.Error("saveSlurmSettings should call scheduleSlurmStorageExpiry after persisting settings")
+	}
+
+	// init() must call scheduleSlurmStorageExpiry before ensureToken.
+	initIdx := strings.Index(js, "async function init()")
+	if initIdx < 0 {
+		t.Fatal("dashboard JS should have an init function")
+	}
+	initBody := js[initIdx:]
+	schedIdx := strings.Index(initBody, "scheduleSlurmStorageExpiry")
+	tokenIdx := strings.Index(initBody, "ensureToken()")
+	if schedIdx < 0 {
+		t.Error("init() should call scheduleSlurmStorageExpiry to arm the expiry timer on page load")
+	}
+	if tokenIdx >= 0 && schedIdx > tokenIdx {
+		t.Error("scheduleSlurmStorageExpiry should be called before ensureToken() in init()")
+	}
+
+	// clearSlurmSettings must call scheduleSlurmStorageExpiry(null) to cancel the timer.
+	clearIdx := strings.Index(js, "clearSlurmSettings = function")
+	if clearIdx < 0 {
+		t.Fatal("dashboard JS should define clearSlurmSettings")
+	}
+	nextWin2 := strings.Index(js[clearIdx+1:], "window.")
+	var clearBody string
+	if nextWin2 > 0 {
+		clearBody = js[clearIdx : clearIdx+1+nextWin2]
+	} else {
+		clearBody = js[clearIdx:]
+	}
+	if !strings.Contains(clearBody, "scheduleSlurmStorageExpiry(null)") {
+		t.Error("clearSlurmSettings should call scheduleSlurmStorageExpiry(null) to cancel any pending expiry timer")
 	}
 }
